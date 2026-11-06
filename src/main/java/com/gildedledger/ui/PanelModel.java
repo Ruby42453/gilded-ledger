@@ -187,9 +187,22 @@ public final class PanelModel
 	public static PanelModel build(TrackerData data, LootPrices prices, IntFunction<String> itemName, boolean ready,
 		boolean combineSkills)
 	{
+		return build(data, prices, itemName, ready, combineSkills, Collections.emptySet());
+	}
+
+	/**
+	 * @param hidden categories left out of the panel and its totals (still tracked)
+	 */
+	public static PanelModel build(TrackerData data, LootPrices prices, IntFunction<String> itemName, boolean ready,
+		boolean combineSkills, java.util.Set<SourceCategory> hidden)
+	{
 		List<SourceView> views = new ArrayList<>();
 		for (SourceRecord record : displayRecords(data, combineSkills))
 		{
+			if (hidden.contains(record.category))
+			{
+				continue;
+			}
 			List<LootView> loot = new ArrayList<>();
 			for (Map.Entry<Integer, Long> e : record.loot.entrySet())
 			{
@@ -283,5 +296,34 @@ public final class PanelModel
 			}
 		});
 		return Collections.unmodifiableMap(ordered);
+	}
+
+	/** One session's loot and supplies, all sources together, for the session log. */
+	public static final class SessionDetail
+	{
+		public final List<LootView> loot;
+		public final List<SupplyView> supplies;
+		public final long lootValue;
+		public final long supplyGp;
+
+		SessionDetail(List<LootView> loot, List<SupplyView> supplies)
+		{
+			this.loot = loot;
+			this.supplies = supplies;
+			this.lootValue = loot.stream().mapToLong(l -> l.value).sum();
+			this.supplyGp = supplies.stream().mapToLong(v -> v.gp).sum();
+		}
+	}
+
+	public static SessionDetail sessionDetail(com.gildedledger.data.GpSession session, LootPrices prices,
+		IntFunction<String> itemName)
+	{
+		List<LootView> loot = new ArrayList<>();
+		session.loot.forEach((id, qty) -> loot.add(new LootView(id, itemName.apply(id), qty, prices, false)));
+		loot.sort(Comparator.comparingLong((LootView v) -> v.value).reversed());
+		List<SupplyView> supplies = new ArrayList<>();
+		session.supplies.forEach((key, line) -> supplies.add(new SupplyView(key, line, false)));
+		supplies.sort(Comparator.comparingLong((SupplyView v) -> v.gp).reversed());
+		return new SessionDetail(Collections.unmodifiableList(loot), Collections.unmodifiableList(supplies));
 	}
 }

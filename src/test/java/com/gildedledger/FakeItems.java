@@ -37,6 +37,19 @@ public class FakeItems implements ItemInfo
 	}
 
 	@Override
+	public int idByName(String name)
+	{
+		for (Map.Entry<Integer, String> e : names.entrySet())
+		{
+			if (e.getValue().equalsIgnoreCase(name) && !noted.containsKey(e.getKey()))
+			{
+				return e.getKey();
+			}
+		}
+		return -1;
+	}
+
+	@Override
 	public String name(int itemId)
 	{
 		return names.getOrDefault(itemId, "");

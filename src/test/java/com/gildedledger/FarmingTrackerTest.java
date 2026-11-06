@@ -351,6 +351,23 @@ public class FarmingTrackerTest
 	}
 
 	@Test
+	public void herbsPickedIntoAHerbSackStillCount()
+	{
+		ledger.data().patchCrops.put(FarmingTracker.patchMemoryKey(HERB_PATCH, "Herb"), "Ranarr");
+		farming.onPatchClicked(HERB_PATCH, "Herb", null, 1);
+		// Three picks: one into the inventory, two straight into an open herb sack.
+		farming.onInventoryChanged(change(GRIMY_RANARR, 1));
+		farming.onXp("Farming", 27);
+		farming.onGameTick(2, HERB_PATCH);
+		farming.onXp("Farming", 27);
+		farming.onGameTick(3, HERB_PATCH);
+		farming.onXp("Farming", 27);
+		farming.onGameTick(4, HERB_PATCH);
+
+		assertEquals(3L, (long) source("farming:Ranarr").loot.get(GRIMY_RANARR));
+	}
+
+	@Test
 	public void walkingAwayEndsTheSession()
 	{
 		ledger.data().patchCrops.put(FarmingTracker.patchMemoryKey(HERB_PATCH, "Herb"), "Ranarr");

@@ -3,6 +3,7 @@ package com.gildedledger;
 import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
 import com.google.inject.Provides;
+import com.gildedledger.data.GpSession;
 import com.gildedledger.data.SourceCategory;
 import com.gildedledger.data.SourceRecord;
 import com.gildedledger.data.TaskRecord;
@@ -14,19 +15,24 @@ import com.gildedledger.tracking.InventoryDiff;
 import com.gildedledger.tracking.ItemInfo;
 import com.gildedledger.tracking.ItemRules;
 import com.gildedledger.tracking.Ledger;
+import com.gildedledger.tracking.MinigameRewards;
 import com.gildedledger.tracking.RecentSupplies;
+import com.gildedledger.tracking.SessionTracker;
 import com.gildedledger.tracking.Reminders;
+import com.gildedledger.tracking.SkillGroups;
 import com.gildedledger.tracking.SkillRules;
 import com.gildedledger.tracking.SkillingTracker;
 import com.gildedledger.tracking.SupplyTracker;
 import com.gildedledger.tracking.TileKey;
+import com.gildedledger.ui.Fonts;
+import com.gildedledger.ui.GildedLedgerPanel;
 import com.gildedledger.ui.LootPrices;
 import com.gildedledger.ui.PanelModel;
-import com.gildedledger.ui.GildedLedgerPanel;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -179,6 +185,7 @@ public class GildedLedgerPlugin extends Plugin
 	private ReminderPopup popup;
 
 	private final Reminders reminders = new Reminders();
+	private final MinigameRewards rewards = new MinigameRewards();
 
 	/** Every skill a potion can boost. Hitpoints (brews, anglers) and Prayer have their own handling. */
 	private static final Skill[] BOOSTED_SKILLS = boostableSkills();
@@ -239,6 +246,7 @@ public class GildedLedgerPlugin extends Plugin
 	/** Set while booking a blowpipe's darts or scales, so the estimate can be corrected on Check. */
 	private boolean bookingBlowpipe;
 	private RecentSupplies recentSupplies;
+	private SessionTracker sessions;
 
 	// The monster the player is currently fighting.
 	private String combatKey;
@@ -253,6 +261,10 @@ public class GildedLedgerPlugin extends Plugin
 	private int slayerBlankCount;
 	private int paymentClickTick = Integer.MIN_VALUE / 2;
 	private int pouchClickTick = Integer.MIN_VALUE / 2;
+	/** What the last clicked bag or pouch holds; only those items are moved by it. */
+	private java.util.function.Predicate<String> pouchClickContents = name -> false;
+	/** Seed box contents last seen, or null until it's first seen (so its contents aren't counted as new). */
+	private Map<Integer, Integer> lastSeedBox;
 	private int lastTeleportCastTick = Integer.MIN_VALUE / 2;
 	private long shownRevision = -1;
 
@@ -264,9 +276,10 @@ public class GildedLedgerPlugin extends Plugin
 
 	/** Settings saved while the plugin was called Pickup Profit, and ones that no longer exist. */
 	private static final String[] LEGACY_SETTINGS = {
-		"trackCombat", "trackFarming", "trackSkilling", "trackAmmo", "skillLayout", "collapseNew"
+		"trackCombat", "trackFarming", "trackAmmo", "skillLayout", "collapseNew"
 	};
-	private static final String[] RETIRED_SETTINGS = {"trackPurchases", "attributionWindow", "lootValue"};
+	/** Skills are always tracked now; "Hide skilling" only hides them. */
+	private static final String[] RETIRED_SETTINGS = {"trackPurchases", "attributionWindow", "lootValue", "trackSkilling"};
 
 	private void migrateLegacySettings()
 	{
@@ -297,6 +310,7 @@ public class GildedLedgerPlugin extends Plugin
 		groundDrops = new GroundDropLedger();
 		supplies = new SupplyTracker(itemInfo, this::bookSupply);
 		recentSupplies = new RecentSupplies(ledger);
+		sessions = new SessionTracker(ledger, lootPrices::value, System::currentTimeMillis);
 
 		Map<String, Integer> compostIds = new HashMap<>();
 		compostIds.put("Compost", ItemID.BUCKET_COMPOST);
@@ -307,6 +321,20 @@ public class GildedLedgerPlugin extends Plugin
 		skilling = new SkillingTracker(ledger, itemInfo);
 		drops = new DropTracker();
 
+		buildPanel();
+
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			clientThread.invoke(this::onLogin);
+		}
+	}
+
+	/** Builds the side panel (again, when the font setting changes) and its toolbar button. */
+	private void buildPanel()
+	{
+		Fonts.use(config.panelFont().getFamily());
+		boolean wasOpen = panel != null && panel.isShowing();
+		NavigationButton old = navButton;
 		panel = new GildedLedgerPanel(itemManager, skillIconManager, this::onPanelAction);
 		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		navButton = NavigationButton.builder()
@@ -315,17 +343,25 @@ public class GildedLedgerPlugin extends Plugin
 			.priority(6)
 			.panel(panel)
 			.build();
-		clientToolbar.addNavigation(navButton);
-
-		if (client.getGameState() == GameState.LOGGED_IN)
+		if (old != null)
 		{
-			clientThread.invoke(this::onLogin);
+			clientToolbar.removeNavigation(old);
+		}
+		clientToolbar.addNavigation(navButton);
+		if (wasOpen)
+		{
+			clientToolbar.openPanel(navButton);
 		}
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		// A session running when the plugin or client stops is paused, time counted up to now.
+		if (profileLoaded)
+		{
+			sessions.pause();
+		}
 		save();
 		clientThread.invoke(popup::close);
 		clientToolbar.removeNavigation(navButton);
@@ -369,16 +405,49 @@ public class GildedLedgerPlugin extends Plugin
 	@Subscribe
 	public void onClientShutdown(ClientShutdown event)
 	{
+		if (profileLoaded)
+		{
+			sessions.pause();
+		}
 		save();
 	}
 
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
+		if (GildedLedgerConfig.GROUP.equals(event.getGroup()) && "panelFont".equals(event.getKey()))
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				buildPanel();
+				clientThread.invoke(() -> refreshPanel(true));
+			});
+			return;
+		}
 		if (GildedLedgerConfig.GROUP.equals(event.getGroup()) && !DATA_KEY.equals(event.getKey()))
 		{
 			clientThread.invoke(() -> refreshPanel(true));
 		}
+	}
+
+	/** Categories hidden from the panel (still tracked): every skill, or the ones picked. */
+	private Set<SourceCategory> hiddenCategories()
+	{
+		Set<SourceCategory> hidden = EnumSet.noneOf(SourceCategory.class);
+		for (SourceCategory category : SourceCategory.values())
+		{
+			if (!category.isSkill() && category != SourceCategory.OTHER)
+			{
+				continue;
+			}
+			boolean hideThis = Boolean.parseBoolean(
+				configManager.getConfiguration(GildedLedgerConfig.GROUP, "hide" + category.getLabel().replace(" ", "")));
+			if (config.hideSkilling() && category.isSkill() || hideThis)
+			{
+				hidden.add(category);
+			}
+		}
+		return hidden;
 	}
 
 	private void onLogin()
@@ -390,6 +459,7 @@ public class GildedLedgerPlugin extends Plugin
 			loadProfile();
 		}
 		lastCarried = null;
+		lastSeedBox = null;
 		clearTickChanges();
 		lastXp.clear();
 		cannonballs = -1;
@@ -426,6 +496,8 @@ public class GildedLedgerPlugin extends Plugin
 		}
 		ledger.load(data);
 		farming.tidyUnknownCrops();
+		skilling.tidyGroups();
+		sessions.pauseAfterRestart();
 		profileLoaded = configManager.getRSProfileKey() != null;
 		taskTargetNames.clear();
 		refreshPanel(true);
@@ -447,10 +519,12 @@ public class GildedLedgerPlugin extends Plugin
 		supplies.reset();
 		recentSupplies.reset();
 		reminders.reset();
+		rewards.reset();
 		farming.reset();
 		skilling.reset();
 		drops.reset();
 		lastCarried = null;
+		lastSeedBox = null;
 		clearTickChanges();
 		lastXp.clear();
 		combatKey = null;
@@ -580,6 +654,20 @@ public class GildedLedgerPlugin extends Plugin
 		MenuAction action = event.getMenuAction();
 
 		String target = Text.removeTags(event.getMenuTarget());
+
+		// Minigame reward pulls: the Rewards Guardian, the Tempoross reward pool, a supply crate...
+		MinigameRewards.Minigame reward = event.isItemOp() && event.getItemId() > 0
+			? MinigameRewards.forItem(itemInfo.name(event.getItemId()), option)
+			: MinigameRewards.forTarget(target, option);
+		if (reward != null)
+		{
+			rewards.onRewardClicked(reward, tick);
+			skilling.onOtherAction();
+			farming.onOtherAction();
+			return;
+		}
+		rewards.onOtherClick();
+
 		boolean spellbookOp = action == MenuAction.CC_OP || action == MenuAction.CC_OP_LOW_PRIORITY;
 		if (spellbookOp && !event.isItemOp() && SkillRules.isTeleportSpell(option, target))
 		{
@@ -588,7 +676,7 @@ public class GildedLedgerPlugin extends Plugin
 			lastTeleportCastTick = tick;
 			stopActivities();
 		}
-		else if (optionLower.startsWith("cast"))
+		else if (optionLower.startsWith("cast") || isSpellbookWidget(spellbookOp, event))
 		{
 			supplies.onCastClicked(tick);
 			// A spell cast straight from the spellbook (Superglass Make, Humidify...). Combat
@@ -661,6 +749,15 @@ public class GildedLedgerPlugin extends Plugin
 		}
 	}
 
+	/**
+	 * A spell's own right-click option in the spellbook, like NPC Contact → Dark Mage:
+	 * a cast, even though the option doesn't say "Cast".
+	 */
+	private static boolean isSpellbookWidget(boolean spellbookOp, MenuOptionClicked event)
+	{
+		return spellbookOp && !event.isItemOp() && (event.getParam1() >>> 16) == InterfaceID.MAGIC_SPELLBOOK;
+	}
+
 	/** Something unrelated to farming or skilling was clicked. */
 	private void stopActivities()
 	{
@@ -677,14 +774,7 @@ public class GildedLedgerPlugin extends Plugin
 	private void startProcessing(int tick, String spell)
 	{
 		farming.onOtherAction();
-		if (config.trackSkilling())
-		{
-			skilling.onProcessClicked(tick, spell);
-		}
-		else
-		{
-			skilling.onOtherAction();
-		}
+		skilling.onProcessClicked(tick, spell);
 	}
 
 	private void onNpcClicked(NPC npc, String option, boolean usedSomethingOn, int tick)
@@ -700,12 +790,12 @@ public class GildedLedgerPlugin extends Plugin
 
 		SourceCategory gather = usedSomethingOn ? null : SkillRules.gatherFromNpc(option);
 		String name = npcName(npc);
-		if (config.trackSkilling() && gather != null && name != null)
+		if (gather != null && name != null)
 		{
 			String sourceName = gather == SourceCategory.FISHING ? SkillRules.fishingMethod(option) : name;
 			skilling.onGatherClicked(gather, sourceName, tileKey(npc.getWorldLocation()), tick);
 		}
-		else if (config.trackSkilling() && !usedSomethingOn && name != null && SkillRules.couldGiveSkillingXp(option))
+		else if (!usedSomethingOn && name != null && SkillRules.couldGiveSkillingXp(option))
 		{
 			// Includes Talk-to, so conversions chosen in dialogue (the sawmill) are tracked too.
 			skilling.onOtherTargetClicked(name, tileKey(npc.getWorldLocation()), tick);
@@ -750,6 +840,7 @@ public class GildedLedgerPlugin extends Plugin
 		else if (SkillRules.isPouchShuffle(itemInfo.name(itemId), option))
 		{
 			pouchClickTick = tick;
+			pouchClickContents = SkillRules.bagContents(itemInfo.name(itemId));
 			return;
 		}
 		if (kind != null)
@@ -785,11 +876,6 @@ public class GildedLedgerPlugin extends Plugin
 		}
 		farming.onOtherAction();
 
-		if (!config.trackSkilling())
-		{
-			skilling.onOtherAction();
-			return;
-		}
 		if (usedItemOn)
 		{
 			// Raw food on a range, ore on a furnace, logs on a fire...
@@ -884,6 +970,19 @@ public class GildedLedgerPlugin extends Plugin
 		{
 			onEquipmentChanged(event.getItemContainer());
 			accumulateCarriedChanges();
+		}
+		else if (event.getContainerId() == InventoryID.SEED_BOX)
+		{
+			// Seeds from a Master Farmer or a bird's nest go straight into an open seed box.
+			// Counting its contents as carried makes those gains (and seeds planted from it) show,
+			// while moving seeds between it and the inventory cancels out.
+			Map<Integer, Integer> now = counts(event.getItemContainer());
+			if (lastSeedBox != null && !isStorageOpen())
+			{
+				InventoryDiff.between(lastSeedBox, now).changes()
+					.forEach((id, delta) -> tickChanges.merge(id, delta, Integer::sum));
+			}
+			lastSeedBox = now;
 		}
 	}
 
@@ -987,14 +1086,32 @@ public class GildedLedgerPlugin extends Plugin
 				groundDrops.recordPlayerDrop(sourceKey, id, (int) (long) qty, here, tick)));
 		diff = diff.without(dropped);
 
-		// Filling or emptying essence and rune pouches only moves items around.
+		// Minigame-only items (Guardians of the Rift essence, Wintertodt roots...) never count,
+		// and neither does an essence pouch degrading or being repaired.
+		Map<Integer, Integer> ignored = new HashMap<>();
+		diff.changes().forEach((id, delta) ->
+		{
+			String name = itemInfo.name(id);
+			if (ItemRules.isMinigameItem(name) || ItemRules.isEssencePouch(name))
+			{
+				ignored.put(id, delta);
+			}
+		});
+		diff = diff.without(ignored);
+		if (diff.isEmpty())
+		{
+			return;
+		}
+
+		// Filling or emptying a pouch or bag (essence pouches, rune pouch, fish barrel, log
+		// basket, gem bag, herb sack, seed box) only moves items around. Only what that bag
+		// holds is ignored, so runes crafted right after emptying a pouch still count.
 		if (tick - pouchClickTick <= POUCH_WINDOW_TICKS)
 		{
 			Map<Integer, Integer> shuffled = new HashMap<>();
 			diff.changes().forEach((id, delta) ->
 			{
-				String name = itemInfo.name(id).toLowerCase(Locale.ENGLISH);
-				if (name.contains("essence") || ItemRules.isRune(itemInfo.name(id), itemInfo.stackable(id)))
+				if (pouchClickContents.test(itemInfo.name(id)))
 				{
 					shuffled.put(id, delta);
 				}
@@ -1002,9 +1119,27 @@ public class GildedLedgerPlugin extends Plugin
 			diff = diff.without(shuffled);
 		}
 
+		// A binding necklace crumbling is charged per craft instead (see bookBindingCharge).
+		Map<Integer, Integer> necklace = new HashMap<>();
+		diff.changes().forEach((id, delta) ->
+		{
+			if (delta < 0 && "binding necklace".equalsIgnoreCase(itemInfo.name(id)))
+			{
+				necklace.put(id, delta);
+			}
+		});
+		diff = diff.without(necklace);
+		bookBindingCharge(diff);
+
 		// Food eaten and potions drunk are already supplies; the leftover dose isn't loot.
 		diff = diff.without(consumedChanges(consumed, diff));
 		if (diff.isEmpty())
+		{
+			return;
+		}
+
+		// A minigame reward pull: everything received is that minigame's loot.
+		if (rewards.onCarriedChanges(diff, tick, ledger))
 		{
 			return;
 		}
@@ -1045,10 +1180,30 @@ public class GildedLedgerPlugin extends Plugin
 			}
 		}
 		// While a patch is being worked, its changes are farming's, never a skill's.
-		if (config.trackSkilling() && !(config.trackFarming() && farming.isArmed()))
+		if (!(config.trackFarming() && farming.isArmed()))
 		{
 			skilling.onInventoryChanged(diff);
 		}
+	}
+
+	/** Each combination-rune craft uses one of a worn binding necklace's 16 charges. */
+	private void bookBindingCharge(InventoryDiff diff)
+	{
+		boolean crafted = diff.changes().entrySet().stream()
+			.anyMatch(e -> e.getValue() > 0 && SkillGroups.isCombinationRune(itemInfo.name(e.getKey())));
+		ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		if (!crafted || worn == null)
+		{
+			return;
+		}
+		Item amulet = worn.getItem(EquipmentInventorySlot.AMULET.getSlotIdx());
+		if (amulet == null || !"binding necklace".equalsIgnoreCase(itemInfo.name(amulet.getId())))
+		{
+			return;
+		}
+		int id = amulet.getId();
+		skilling.onSupplyUsed(SupplyTracker.charge(id, "binding-charge", "Binding necklace", "charges", 1,
+			Math.round(itemInfo.marketPrice(id) / 16.0)));
 	}
 
 	private static boolean isCannonball(int itemId)
@@ -1417,9 +1572,10 @@ public class GildedLedgerPlugin extends Plugin
 				int lost = pouchQuantities[i] - event.getValue();
 				pouchQuantities[i] = event.getValue();
 				int runeId = pouchRuneId(pouchTypes[i]);
-				if (lost > 0 && runeId > 0 && !isStorageOpen())
+				boolean pouchShuffle = client.getTickCount() - pouchClickTick <= POUCH_WINDOW_TICKS;
+				if (lost > 0 && runeId > 0 && !isStorageOpen() && !pouchShuffle)
 				{
-					supplies.onRunesLost(runeId, lost);
+					supplies.onPouchRunesLost(runeId, lost);
 				}
 				return;
 			}
@@ -1501,10 +1657,19 @@ public class GildedLedgerPlugin extends Plugin
 		boolean magicForSkilling = skill == Skill.MAGIC && skilling.isActive();
 		boolean farmingXp = skill == Skill.FARMING
 			|| (config.trackFarming() && farming.isArmed() && skill == Skill.WOODCUTTING);
-		if (config.trackSkilling() && !NON_SKILLING_XP.contains(skill) && !farmingXp
+		if (!NON_SKILLING_XP.contains(skill) && !farmingXp
 			&& (!fighting || skill != Skill.MAGIC || magicForSkilling))
 		{
-			skilling.onXp(skill.getName(), gained);
+			if (skilling.isActive())
+			{
+				skilling.onXp(skill.getName(), gained);
+			}
+			else if (skill != Skill.MAGIC || tick - lastCombatTick > COMBAT_XP_WINDOW_TICKS)
+			{
+				// XP from nothing being done: minigame rewards (Guardians of the Rift, Wintertodt...),
+				// lamps and the like go to the skill's "Other".
+				skilling.bookOtherXp(skill.getName(), gained);
+			}
 		}
 
 		TaskRecord task = ledger.data().currentTask;
@@ -1536,6 +1701,11 @@ public class GildedLedgerPlugin extends Plugin
 			&& Text.removeTags(event.getMessage()).startsWith("A superior foe has appeared"))
 		{
 			remind(config.superiorReminder(), "Superior spawn", "A superior foe has appeared!");
+		}
+		if (tracking() && (event.getType() == ChatMessageType.GAMEMESSAGE || event.getType() == ChatMessageType.SPAM))
+		{
+			// "You've caught a crimson swift." names what a trap caught (some are filtered spam).
+			skilling.onChatMessage(Text.removeTags(event.getMessage()), client.getTickCount());
 		}
 		if (tracking() && event.getType() == ChatMessageType.GAMEMESSAGE)
 		{
@@ -1584,6 +1754,14 @@ public class GildedLedgerPlugin extends Plugin
 		trackBlowpipe(tick);
 		processCarriedChanges(tick);
 		supplies.onGameTick(tick);
+		// Runes taken from the rune pouch by no spell (combination runecrafting) cost the action.
+		Map<Integer, Integer> pouchRunes = supplies.takeUnusedPouchRunes();
+		if (!pouchRunes.isEmpty() && skilling.isActive())
+		{
+			Map<Integer, Integer> used = new HashMap<>();
+			pouchRunes.forEach((id, qty) -> used.put(id, -qty));
+			skilling.onInventoryChanged(InventoryDiff.of(used));
+		}
 		farming.onGameTick(tick, localTile());
 		skilling.onGameTick(tick, localTile());
 		groundDrops.expire(tick);
@@ -1622,7 +1800,7 @@ public class GildedLedgerPlugin extends Plugin
 		List<String> ending = reminders.onBoosts(tick, boosts, divine, client.isPrayerActive(Prayer.PRESERVE), warnTicks);
 		if (!ending.isEmpty())
 		{
-			remind(config.boostReminder(), "Boost potion", "Your " + joinSkills(ending)
+			remind(config.boostReminder(), "Boost", "Your " + joinSkills(ending)
 				+ (ending.size() == 1 ? " boost runs" : " boosts run") + " out in about "
 				+ config.boostReminderSeconds() + " seconds.");
 		}
@@ -1760,6 +1938,10 @@ public class GildedLedgerPlugin extends Plugin
 
 	private void bookSupply(SupplyTracker.Use use)
 	{
+		if (ItemRules.isMinigameItem(itemInfo.name(use.itemId)))
+		{
+			return;
+		}
 		// Teleports are their own category, never charged to a monster, task or skill.
 		if (use.teleport != null)
 		{
@@ -1782,7 +1964,7 @@ public class GildedLedgerPlugin extends Plugin
 		// mid-Slayer task. Cannonballs and arrows only ever come from a fight.
 		boolean combatOnly = use.kind == SupplyTracker.Kind.CANNONBALL || use.kind == SupplyTracker.Kind.AMMO
 			|| use.kind == SupplyTracker.Kind.CHARGES;
-		if (!combatOnly && config.trackSkilling() && skilling.onSupplyUsed(use))
+		if (!combatOnly && skilling.onSupplyUsed(use))
 		{
 			return;
 		}
@@ -1851,6 +2033,33 @@ public class GildedLedgerPlugin extends Plugin
 				case TOGGLE_LOOT:
 				case TOGGLE_SUPPLY:
 					toggleExcluded(action, key);
+					break;
+				case SESSION_START:
+					sessions.start();
+					break;
+				case SESSION_PAUSE:
+					sessions.pause();
+					break;
+				case SESSION_RESUME:
+					sessions.resume();
+					break;
+				case SESSION_END:
+					sessions.end();
+					break;
+				case SESSION_RENAME:
+				{
+					int split = key.indexOf('\n');
+					if (split > 0)
+					{
+						sessions.rename(key.substring(0, split), key.substring(split + 1));
+					}
+					break;
+				}
+				case SESSION_DELETE:
+					sessions.delete(key);
+					break;
+				case SESSION_CLEAR:
+					sessions.clearLog();
 					break;
 			}
 			save();
@@ -1980,13 +2189,21 @@ public class GildedLedgerPlugin extends Plugin
 		}
 		shownRevision = ledger.revision();
 		PanelModel model = PanelModel.build(ledger.data(), lootPrices, itemInfo::name, profileLoaded,
-			config.skillLayout() == GildedLedgerConfig.SkillLayout.COMBINED);
+			config.skillLayout() == GildedLedgerConfig.SkillLayout.COMBINED, hiddenCategories());
 		boolean collapseNew = config.collapseNew();
+		GpSession liveSession = profileLoaded ? sessions.live() : null;
+		List<GpSession> sessionLog = new ArrayList<>(ledger.data().sessionLog);
+		Map<String, PanelModel.SessionDetail> sessionDetails = new HashMap<>();
+		for (GpSession logged : sessionLog)
+		{
+			sessionDetails.put(logged.id, PanelModel.sessionDetail(logged, lootPrices, itemInfo::name));
+		}
 		GildedLedgerPanel target = panel;
 		SwingUtilities.invokeLater(() ->
 		{
 			target.setCollapseNew(collapseNew);
 			target.update(model);
+			target.updateSessions(liveSession, sessionLog, sessionDetails);
 		});
 	}
 
@@ -2007,6 +2224,10 @@ public class GildedLedgerPlugin extends Plugin
 			{
 				return 1000;
 			}
+			if (isZeroValue(id))
+			{
+				return 0;
+			}
 			return itemManager.getItemPrice(id);
 		}
 
@@ -2023,7 +2244,14 @@ public class GildedLedgerPlugin extends Plugin
 				return 1000;
 			}
 			ItemComposition comp = itemManager.getItemComposition(id);
-			return comp == null ? 0 : comp.getHaPrice();
+			return comp == null || ItemRules.isZeroValue(comp.getName()) ? 0 : comp.getHaPrice();
+		}
+
+		@Override
+		public boolean valuedAtAlch(int itemId)
+		{
+			ItemComposition comp = itemManager.getItemComposition(itemManager.canonicalize(itemId));
+			return comp != null && ItemRules.isTarnished(comp.getName());
 		}
 
 		@Override
@@ -2038,6 +2266,13 @@ public class GildedLedgerPlugin extends Plugin
 			return comp != null && comp.isTradeable();
 		}
 	};
+
+	/** Clues and reward currencies (marks of grace, abyssal pearls...) are worth nothing here. */
+	private boolean isZeroValue(int itemId)
+	{
+		ItemComposition comp = itemManager.getItemComposition(itemId);
+		return comp != null && ItemRules.isZeroValue(comp.getName());
+	}
 
 	private long lootPrice(int itemId)
 	{
@@ -2163,14 +2398,46 @@ public class GildedLedgerPlugin extends Plugin
 			{
 				return 1;
 			}
+			if (isZeroValue(id))
+			{
+				return 0;
+			}
 			long ge = itemManager.getItemPrice(id);
 			if (ge > 0)
 			{
 				return ge;
 			}
-			// No GE price (untradeable, e.g. a tarnished ring): use its High Alchemy value.
+			// No GE price: tradeable items and tarnished items (a tarnished ring polishes into
+			// a real ring) use their High Alchemy value; anything else untradeable is worth 0.
 			ItemComposition item = itemManager.getItemComposition(id);
-			return item == null ? 0 : Math.max(0, item.getHaPrice());
+			if (item == null || !(item.isTradeable() || ItemRules.isTarnished(item.getName())))
+			{
+				return 0;
+			}
+			return Math.max(0, item.getHaPrice());
+		}
+
+		private final Map<String, Integer> idsByName = new HashMap<>();
+
+		@Override
+		public int idByName(String name)
+		{
+			if (name == null || name.isEmpty())
+			{
+				return -1;
+			}
+			String key = name.toLowerCase(Locale.ENGLISH);
+			return idsByName.computeIfAbsent(key, k ->
+			{
+				for (var price : itemManager.search(k))
+				{
+					if (price.getName().equalsIgnoreCase(k))
+					{
+						return price.getId();
+					}
+				}
+				return -1;
+			});
 		}
 
 		@Override

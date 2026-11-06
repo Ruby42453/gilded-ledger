@@ -371,6 +371,7 @@ public class FarmingTracker
 		}
 
 		// Gains first, credited to whatever was growing before any replant this tick.
+		boolean harvestGained = false;
 		for (Map.Entry<Integer, Integer> change : tickChanges.entrySet())
 		{
 			int id = change.getKey();
@@ -386,6 +387,7 @@ public class FarmingTracker
 				}
 				ledger.addLoot(sourceKey(s), sourceName(s), SourceCategory.FARMING, id, delta);
 				countOnce(s);
+				harvestGained = true;
 			}
 		}
 
@@ -436,6 +438,20 @@ public class FarmingTracker
 				{
 					bookCompost(s, id, 1, items.marketPrice(id));
 				}
+			}
+		}
+
+		// Picking a herb gives Farming XP; with an open herb sack the herb never reaches the
+		// inventory, so the XP alone says one more of the patch's herb was picked.
+		boolean compostThisTick = compostItemUsed || !tickCompostMessages.isEmpty();
+		if (!harvestGained && !planted && !compostThisTick && tickXp.getOrDefault("Farming", 0L) > 0
+			&& s.crop != null && s.category != null && s.category.toLowerCase(Locale.ENGLISH).contains("herb"))
+		{
+			int herb = grimyHerb(s.crop);
+			if (herb > 0)
+			{
+				ledger.addLoot(sourceKey(s), sourceName(s), SourceCategory.FARMING, herb, 1);
+				countOnce(s);
 			}
 		}
 
@@ -562,6 +578,21 @@ public class FarmingTracker
 		{
 			ledger.changed();
 		}
+	}
+
+	/** The grimy herb a herb crop gives: "Ranarr" → Grimy ranarr weed, "Guam" → Grimy guam leaf. */
+	private int grimyHerb(String crop)
+	{
+		String base = "Grimy " + crop.toLowerCase(Locale.ENGLISH);
+		for (String name : new String[]{base, base + " weed", base + " leaf"})
+		{
+			int id = items.idByName(name);
+			if (id > 0)
+			{
+				return id;
+			}
+		}
+		return -1;
 	}
 
 	/** "Papaya" and "Papaya tree", "Yew" and "Yew tree": one entry per crop. */

@@ -27,6 +27,10 @@ public class TrackerData
 	public int blowpipeDart;
 	/** Which crop was last planted in each farming patch, keyed by packed patch location. */
 	public Map<String, String> patchCrops = new LinkedHashMap<>();
+	/** The GP/hour session in progress (running or paused), or null. */
+	public GpSession activeSession;
+	/** Finished GP/hour sessions, newest first. */
+	public List<GpSession> sessionLog = new ArrayList<>();
 
 	public SourceRecord source(String key, String name, SourceCategory category, long nowMillis)
 	{

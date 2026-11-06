@@ -47,18 +47,6 @@ public interface GildedLedgerConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "trackSkilling",
-		name = "Track skilling",
-		description = "Track Woodcutting, Fishing, Mining, Hunter and Thieving per target, and processing (cleaning, cooking, fletching, smelting, alching...) per product",
-		section = trackingSection,
-		position = 2
-	)
-	default boolean trackSkilling()
-	{
-		return true;
-	}
-
-	@ConfigItem(
 		keyName = "trackAmmo",
 		name = "Count ammunition",
 		description = "Count arrows, bolts, darts and other ammunition used in combat as supplies",
@@ -106,6 +94,59 @@ public interface GildedLedgerConfig extends Config
 	default SkillLayout skillLayout()
 	{
 		return SkillLayout.SEPARATE;
+	}
+
+	@ConfigItem(
+		keyName = "hideSkilling",
+		name = "Hide skilling",
+		description = "Hide every skill from the panel and its totals. Skills are always tracked, so turning this off brings everything back. To hide only some skills, use Hide skills below.",
+		section = displaySection,
+		position = 2
+	)
+	default boolean hideSkilling()
+	{
+		return false;
+	}
+
+	enum PanelFont
+	{
+		RUNESCAPE("RuneScape", "RuneScape"),
+		RUNESCAPE_LARGE("RuneScape (larger)", "RuneScape (larger)"),
+		SANS_SERIF("Sans-serif", "SansSerif"),
+		SERIF("Serif", "Serif"),
+		MONOSPACED("Monospaced", "Monospaced");
+
+		private final String label;
+		private final String family;
+
+		PanelFont(String label, String family)
+		{
+			this.label = label;
+			this.family = family;
+		}
+
+		public String getFamily()
+		{
+			return family;
+		}
+
+		@Override
+		public String toString()
+		{
+			return label;
+		}
+	}
+
+	@ConfigItem(
+		keyName = "panelFont",
+		name = "Font",
+		description = "The font the side panel is written in",
+		section = displaySection,
+		position = 3
+	)
+	default PanelFont panelFont()
+	{
+		return PanelFont.RUNESCAPE;
 	}
 
 	@ConfigItem(
@@ -225,5 +266,231 @@ public interface GildedLedgerConfig extends Config
 	default boolean reminderPopup()
 	{
 		return true;
+	}
+
+	@ConfigSection(
+		name = "Hide skills",
+		description = "Advanced: hide single skills from the panel and its totals. They're still tracked.",
+		position = 3,
+		closedByDefault = true
+	)
+	String hideSkillsSection = "hideSkills";
+
+	// Keys are "hide" + the category label: hideWoodcutting, hideOther...
+
+	@ConfigItem(
+		keyName = "hideWoodcutting",
+		name = "Woodcutting",
+		description = "Hide Woodcutting from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 0
+	)
+	default boolean hideWoodcutting()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideFishing",
+		name = "Fishing",
+		description = "Hide Fishing from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 1
+	)
+	default boolean hideFishing()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideMining",
+		name = "Mining",
+		description = "Hide Mining from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 2
+	)
+	default boolean hideMining()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideHunter",
+		name = "Hunter",
+		description = "Hide Hunter from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 3
+	)
+	default boolean hideHunter()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideThieving",
+		name = "Thieving",
+		description = "Hide Thieving from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 4
+	)
+	default boolean hideThieving()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideRunecrafting",
+		name = "Runecrafting",
+		description = "Hide Runecrafting from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 5
+	)
+	default boolean hideRunecrafting()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideHerblore",
+		name = "Herblore",
+		description = "Hide Herblore from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 6
+	)
+	default boolean hideHerblore()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideCooking",
+		name = "Cooking",
+		description = "Hide Cooking from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 7
+	)
+	default boolean hideCooking()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideFletching",
+		name = "Fletching",
+		description = "Hide Fletching from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 8
+	)
+	default boolean hideFletching()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideCrafting",
+		name = "Crafting",
+		description = "Hide Crafting from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 9
+	)
+	default boolean hideCrafting()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideSmithing",
+		name = "Smithing",
+		description = "Hide Smithing from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 10
+	)
+	default boolean hideSmithing()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideFiremaking",
+		name = "Firemaking",
+		description = "Hide Firemaking from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 11
+	)
+	default boolean hideFiremaking()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideMagic",
+		name = "Magic",
+		description = "Hide Magic from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 12
+	)
+	default boolean hideMagic()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hidePrayer",
+		name = "Prayer",
+		description = "Hide Prayer from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 13
+	)
+	default boolean hidePrayer()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideConstruction",
+		name = "Construction",
+		description = "Hide Construction from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 14
+	)
+	default boolean hideConstruction()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideAgility",
+		name = "Agility",
+		description = "Hide Agility from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 15
+	)
+	default boolean hideAgility()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideSailing",
+		name = "Sailing",
+		description = "Hide Sailing from the panel (still tracked)",
+		section = hideSkillsSection,
+		position = 16
+	)
+	default boolean hideSailing()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideOther",
+		name = "Other",
+		description = "Hide minigame rewards that belong to no skill",
+		section = hideSkillsSection,
+		position = 17
+	)
+	default boolean hideOther()
+	{
+		return false;
 	}
 }

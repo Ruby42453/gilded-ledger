@@ -1,8 +1,9 @@
 package com.gildedledger.ui;
 
 /**
- * Per-item prices for loot. The value used for profit is the Grand Exchange
- * price, or the High Alchemy price when the item can't be traded.
+ * Per-item prices for loot. The value used for profit is the Grand Exchange price.
+ * Untradeable items are worth nothing, except the few that are really worth their
+ * alch price (tarnished items, which polish into tradeable ones).
  */
 public interface LootPrices
 {
@@ -12,10 +13,23 @@ public interface LootPrices
 
 	boolean tradeable(int itemId);
 
-	/** GE price for tradeable items with a price; High Alchemy price otherwise. */
+	/** Untradeable items valued at their High Alchemy price anyway. */
+	default boolean valuedAtAlch(int itemId)
+	{
+		return false;
+	}
+
+	/**
+	 * GE price for tradeable items (their alch price if the GE has none); 0 for untradeable
+	 * items unless {@link #valuedAtAlch} says otherwise.
+	 */
 	default long value(int itemId)
 	{
-		long ge = ge(itemId);
-		return tradeable(itemId) && ge > 0 ? ge : highAlch(itemId);
+		if (tradeable(itemId))
+		{
+			long ge = ge(itemId);
+			return ge > 0 ? ge : highAlch(itemId);
+		}
+		return valuedAtAlch(itemId) ? highAlch(itemId) : 0;
 	}
 }

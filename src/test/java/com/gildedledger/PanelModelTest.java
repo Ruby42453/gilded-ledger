@@ -16,6 +16,7 @@ public class PanelModelTest
 	private static final int WHIP = 4151;
 	private static final int DEFENDER = 12954;
 	private static final int CLUE = 2722;
+	private static final int TARNISHED_RING = 31000;
 
 	/** Whip trades for 1.5M; the defender and the clue can't be traded. */
 	private static final LootPrices PRICES = new LootPrices()
@@ -29,7 +30,13 @@ public class PanelModelTest
 		@Override
 		public long highAlch(int itemId)
 		{
-			return itemId == WHIP ? 72_000 : itemId == DEFENDER ? 30_000 : 0;
+			return itemId == WHIP ? 72_000 : itemId == DEFENDER ? 30_000 : itemId == TARNISHED_RING ? 1_800 : 0;
+		}
+
+		@Override
+		public boolean valuedAtAlch(int itemId)
+		{
+			return itemId == TARNISHED_RING;
 		}
 
 		@Override
@@ -40,20 +47,20 @@ public class PanelModelTest
 	};
 
 	@Test
-	public void tradeableLootUsesGeAndUntradeableUsesHighAlch()
+	public void tradeableLootUsesGeAndUntradeablesAreWorthNothingExceptTarnished()
 	{
 		TrackerData data = new TrackerData();
 		data.source("npc:Abyssal demon", "Abyssal demon", SourceCategory.COMBAT, 1).addLoot(WHIP, 2, 1);
 		data.source("npc:Abyssal demon", "Abyssal demon", SourceCategory.COMBAT, 1).addLoot(DEFENDER, 1, 1);
 		data.source("npc:Abyssal demon", "Abyssal demon", SourceCategory.COMBAT, 1).addLoot(CLUE, 1, 1);
+		data.source("npc:Abyssal demon", "Abyssal demon", SourceCategory.COMBAT, 1).addLoot(TARNISHED_RING, 1, 1);
 
 		PanelModel.SourceView demon = PanelModel.build(data, PRICES, id -> "item" + id, true).sources.get(0);
 
-		assertEquals(3_000_000 + 30_000, demon.lootValue);
-		assertEquals(2 * 72_000 + 30_000, demon.lootHa);
+		// Whips at GE, the tarnished ring at its alch price, the defender and clue at nothing.
+		assertEquals(3_000_000 + 1_800, demon.lootValue);
 		assertEquals(WHIP, demon.loot.get(0).itemId);
-		assertFalse(demon.loot.get(1).tradeable);
-		assertEquals(30_000, demon.loot.get(1).value);
+		assertTrue(demon.loot.stream().anyMatch(l -> l.itemId == DEFENDER && !l.tradeable && l.value == 0));
 	}
 
 	@Test
@@ -75,7 +82,7 @@ public class PanelModelTest
 
 		// Toggling again counts it once more.
 		demon.toggleLootExcluded(DEFENDER);
-		assertEquals(1_530_000, PanelModel.build(data, PRICES, id -> "", true).sources.get(0).lootValue);
+		assertEquals(1_500_000, PanelModel.build(data, PRICES, id -> "", true).sources.get(0).lootValue);
 	}
 
 	@Test

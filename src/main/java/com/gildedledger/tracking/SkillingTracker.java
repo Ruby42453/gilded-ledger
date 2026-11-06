@@ -54,12 +54,32 @@ public class SkillingTracker
 	private String actionSpell;
 	private String lastName;
 	private SourceCategory lastCategory;
+	private int lastBookedTick = Integer.MIN_VALUE / 2;
+	/** Items gained within this many ticks after an action, with no XP of their own, are part of it. */
+	static final int TRAILING_GAIN_TICKS = 3;
 
 	private final Map<Integer, Integer> tickChanges = new HashMap<>();
 	private final Map<String, Long> tickXp = new HashMap<>();
 	private final List<SupplyTracker.Use> tickSupplies = new ArrayList<>();
 
 	/** Changes from the previous tick that came with no XP, waiting to see if XP follows. */
+	/** XP with no items for this long after the last item change isn't the action's: it's "Other". */
+	static final int XP_FOLLOW_TICKS = 5;
+	private int lastItemTick = Integer.MIN_VALUE / 2;
+	/** The group (fish, rock...) this session's catches go to, once known. */
+	private String sessionGroup;
+	private String pendingCreature;
+	private int pendingCreatureTick = Integer.MIN_VALUE / 2;
+	private int currentTick;
+	private final Map<String, Long> pendingOtherXp = new HashMap<>();
+	/** Fishing bait used before the session's first catch. */
+	private final Map<Integer, Integer> earlyChanges = new HashMap<>();
+	private final List<SupplyTracker.Use> earlySupplies = new ArrayList<>();
+	private final Map<String, Long> earlyXp = new HashMap<>();
+	/** Catches named in chat this tick (item → count). */
+	private final Map<Integer, Integer> caughtThisTick = new HashMap<>();
+	private int destroyedCatchTick = Integer.MIN_VALUE / 2;
+
 	private final Map<Integer, Integer> heldChanges = new HashMap<>();
 	private final List<SupplyTracker.Use> heldSupplies = new ArrayList<>();
 	private int heldSinceTick;
@@ -79,6 +99,7 @@ public class SkillingTracker
 		}
 		flushHeld();
 		lastKey = null;
+		sessionGroup = null;
 		mode = Mode.GATHERING;
 		targetCategory = category;
 		targetName = name;
@@ -103,6 +124,7 @@ public class SkillingTracker
 		{
 			flushHeld();
 			lastKey = null;
+			sessionGroup = null;
 		}
 		mode = Mode.PROCESSING;
 		actionSpell = spell;
@@ -119,6 +141,7 @@ public class SkillingTracker
 		}
 		flushHeld();
 		lastKey = null;
+		sessionGroup = null;
 		mode = Mode.OTHER;
 		targetName = name;
 		targetTile = target;
@@ -164,8 +187,112 @@ public class SkillingTracker
 		return true;
 	}
 
+	/** XP from no action at all, such as a minigame's reward: the skill's "Other". */
+	public void bookOtherXp(String skill, long amount)
+	{
+		SourceCategory category = SourceCategory.forSkill(skill);
+		if (category == null || amount <= 0)
+		{
+			return;
+		}
+		ledger.addXp(otherKey(category), SkillGroups.OTHER, category, skill, amount);
+	}
+
+	public static String otherKey(SourceCategory category)
+	{
+		return "other:" + category.name();
+	}
+
+	/**
+	 * Game messages: "You've caught a crimson swift." names the creature a trap caught,
+	 * and "You catch a trout." / "You get some yew logs." / "You just found a Ruby!"
+	 * name a catch, which counts even when it went straight into a fish barrel, log
+	 * basket or gem bag instead of the inventory.
+	 */
+	public void onChatMessage(String message, int tick)
+	{
+		if (SkillGroups.isDestroyedCatch(message))
+		{
+			destroyedCatchTick = tick;
+		}
+		if (mode == Mode.GATHERING)
+		{
+			for (String name : SkillGroups.caughtItemNames(message))
+			{
+				int id = items.idByName(name);
+				if (id > 0)
+				{
+					caughtThisTick.merge(id, 1, Integer::sum);
+					break;
+				}
+			}
+		}
+		String creature = SkillGroups.creatureFromMessage(message);
+		if (creature != null)
+		{
+			pendingCreature = creature;
+			pendingCreatureTick = tick;
+		}
+	}
+
+	/**
+	 * A catch the game announced that never reached the inventory went into a fish
+	 * barrel, log basket or gem bag: count it as if it had.
+	 */
+	private void addCatchesInBags(int tick)
+	{
+		if (mode == Mode.GATHERING && tick - destroyedCatchTick > 0)
+		{
+			caughtThisTick.forEach((id, count) ->
+			{
+				int gained = Math.max(0, tickChanges.getOrDefault(id, 0));
+				if (gained < count)
+				{
+					tickChanges.merge(id, count - gained, Integer::sum);
+				}
+			});
+		}
+		caughtThisTick.clear();
+	}
+
+	/**
+	 * XP in a tick with nothing gained or used, a while after the action last changed
+	 * any items, isn't that action's (a minigame reward, for one): it goes to Other,
+	 * unless items follow on the next tick.
+	 */
+	private boolean isLoneXp(int tick)
+	{
+		return !tickXp.isEmpty() && tickChanges.isEmpty() && tickSupplies.isEmpty()
+			&& heldChanges.isEmpty() && heldSupplies.isEmpty() && tick - lastItemTick > XP_FOLLOW_TICKS;
+	}
+
 	public void onGameTick(int tick, TileKey playerTile)
 	{
+		currentTick = tick;
+		addCatchesInBags(tick);
+		boolean itemsThisTick = !tickChanges.isEmpty() || !tickSupplies.isEmpty();
+		if (!pendingOtherXp.isEmpty())
+		{
+			// Last tick's lone XP: if items turned up now, it was this action's after all.
+			if (itemsThisTick)
+			{
+				pendingOtherXp.forEach((skill, xp) -> tickXp.merge(skill, xp, Long::sum));
+			}
+			else
+			{
+				pendingOtherXp.forEach(this::bookOtherXp);
+			}
+			pendingOtherXp.clear();
+		}
+		if (itemsThisTick)
+		{
+			lastItemTick = tick;
+		}
+		if (mode != Mode.NONE && isLoneXp(tick))
+		{
+			pendingOtherXp.putAll(tickXp);
+			tickXp.clear();
+		}
 		if (mode == Mode.GATHERING)
 		{
 			resolveGathering(tick);
@@ -199,6 +326,10 @@ public class SkillingTracker
 		tickSupplies.clear();
 		heldChanges.clear();
 		heldSupplies.clear();
+		sessionGroup = null;
+		pendingCreature = null;
+		pendingOtherXp.clear();
+		clearEarly();
 	}
 
 	// ---------------------------------------------------------------- gathering
@@ -213,9 +344,52 @@ public class SkillingTracker
 		}
 		if (!tickChanges.isEmpty() || !tickXp.isEmpty() || !tickSupplies.isEmpty())
 		{
-			bookAction(new HashMap<>(tickChanges), new ArrayList<>(tickSupplies), tickXp, targetCategory, true);
+			if (targetCategory == SourceCategory.FISHING && sessionGroup == null && !caughtFish(tickChanges))
+			{
+				// Bait used before the first catch: we don't know the fish yet, so keep it
+				// until we do (a karambwanji used on a karambwan spot belongs to Karambwan).
+				tickChanges.forEach((id, delta) -> earlyChanges.merge(id, delta, Integer::sum));
+				earlySupplies.addAll(tickSupplies);
+				tickXp.forEach((skill, xp) -> earlyXp.merge(skill, xp, Long::sum));
+				lastActivityTick = tick;
+				return;
+			}
+			Map<Integer, Integer> changes = new HashMap<>(tickChanges);
+			List<SupplyTracker.Use> supplies = new ArrayList<>(tickSupplies);
+			Map<String, Long> xp = new HashMap<>(tickXp);
+			earlyChanges.forEach((id, delta) -> changes.merge(id, delta, Integer::sum));
+			supplies.addAll(earlySupplies);
+			earlyXp.forEach((skill, amount) -> xp.merge(skill, amount, Long::sum));
+			clearEarly();
+			bookAction(changes, supplies, xp, targetCategory, true);
 			lastActivityTick = tick;
 		}
+	}
+
+	private boolean caughtFish(Map<Integer, Integer> changes)
+	{
+		return changes.entrySet().stream().anyMatch(e -> e.getValue() > 0 && SkillGroups.isFish(items.name(e.getKey())));
+	}
+
+	/** The session ended before any fish was caught: book the bait under the spot as before. */
+	private void flushEarly()
+	{
+		if (earlyChanges.isEmpty() && earlySupplies.isEmpty() && earlyXp.isEmpty())
+		{
+			return;
+		}
+		Map<Integer, Integer> changes = new HashMap<>(earlyChanges);
+		List<SupplyTracker.Use> supplies = new ArrayList<>(earlySupplies);
+		Map<String, Long> xp = new HashMap<>(earlyXp);
+		clearEarly();
+		bookAction(changes, supplies, xp, SourceCategory.FISHING, true);
+	}
+
+	private void clearEarly()
+	{
+		earlyChanges.clear();
+		earlySupplies.clear();
+		earlyXp.clear();
 	}
 
 	// ---------------------------------------------------------------- other XP actions
@@ -268,7 +442,13 @@ public class SkillingTracker
 			{
 				item = mostValuable(changes, false);
 			}
-			if (item > 0)
+			String group = groupName(category, changes, gathering);
+			if (group != null)
+			{
+				name = group;
+				key = SkillGroups.OTHER.equals(group) ? otherKey(category) : "item:" + category.name() + ":" + name;
+			}
+			else if (item > 0)
 			{
 				name = items.name(item);
 				key = "item:" + category.name() + ":" + name;
@@ -292,6 +472,7 @@ public class SkillingTracker
 		lastKey = key;
 		lastName = name;
 		lastCategory = category;
+		lastBookedTick = currentTick;
 
 		boolean gained = false;
 		for (Map.Entry<Integer, Integer> change : changes.entrySet())
@@ -314,6 +495,114 @@ public class SkillingTracker
 			ledger.incrementCount(key, name, category);
 		}
 		bookXpAndSupplies(key, name, category, xp, supplies);
+	}
+
+	/**
+	 * The group an action belongs to for skills that are grouped by more than the item
+	 * made (see {@link SkillGroups}), or null to name it after the item.
+	 */
+	private String groupName(SourceCategory category, Map<Integer, Integer> changes, boolean gathering)
+	{
+		List<String> made = new ArrayList<>();
+		List<String> used = new ArrayList<>();
+		changes.forEach((id, delta) -> (delta > 0 ? made : used).add(items.name(id)));
+		switch (category)
+		{
+			case RUNECRAFTING:
+				if (changes.isEmpty())
+				{
+					return null;
+				}
+				return made.isEmpty() ? SkillGroups.OTHER : SkillGroups.runecraftingAltar(made, used);
+			case FISHING:
+			{
+				if (sessionGroup == null)
+				{
+					made.stream().filter(SkillGroups::isFish).findFirst()
+						.ifPresent(fish -> sessionGroup = SkillGroups.fishGroup(fish));
+				}
+				return sessionGroup;
+			}
+			case MINING:
+			{
+				if (sessionGroup == null && (gathering || !made.isEmpty()))
+				{
+					String ore = made.isEmpty() ? null : made.get(0);
+					String rock = SkillGroups.miningRock(gathering ? targetName : null, ore);
+					sessionGroup = SkillGroups.OTHER.equals(rock) ? null : rock;
+				}
+				return sessionGroup;
+			}
+			case HUNTER:
+			{
+				if (currentTick - pendingCreatureTick <= 3 && pendingCreature != null)
+				{
+					String creature = pendingCreature;
+					pendingCreature = null;
+					return creature;
+				}
+				if (targetName != null && !SkillGroups.isTrap(targetName) && mode != Mode.PROCESSING)
+				{
+					// Caught by hand: the target is the creature (butterflies, implings).
+					return targetName;
+				}
+				int best = mostValuable(changes, true);
+				return best > 0 ? SkillGroups.creatureFromItem(items.name(best)) : null;
+			}
+			case HERBLORE:
+			{
+				int best = mostValuable(changes, true);
+				return best > 0 ? SkillGroups.herblore(items.name(best)) : null;
+			}
+			default:
+				return null;
+		}
+	}
+
+	/**
+	 * Renames older entries to the current grouping: runes into their altar, fish into
+	 * their spot's group, ores into their rock, potions without their dose.
+	 */
+	public void tidyGroups()
+	{
+		List<com.gildedledger.data.SourceRecord> records = new ArrayList<>(ledger.data().sources.values());
+		for (com.gildedledger.data.SourceRecord record : records)
+		{
+			if (record.key == null || !record.key.startsWith("item:") || record.name == null)
+			{
+				continue;
+			}
+			String group;
+			switch (record.category)
+			{
+				case RUNECRAFTING:
+					// Only old per-rune entries; altars (and Other) are already grouped.
+					group = SkillGroups.isAltarGroup(record.name) ? null : SkillGroups.altarFor(record.name, null);
+					break;
+				case FISHING:
+					group = SkillGroups.isFish(record.name) ? SkillGroups.fishGroup(record.name) : null;
+					break;
+				case MINING:
+					// Only old per-ore entries; rocks and veins are already grouped.
+					group = SkillGroups.isOre(record.name) ? SkillGroups.rockFromOre(record.name) : null;
+					break;
+				case HUNTER:
+					group = SkillGroups.creatureFromItem(record.name);
+					break;
+				case HERBLORE:
+					group = SkillGroups.herblore(record.name);
+					break;
+				default:
+					group = null;
+			}
+			if (group == null || group.equals(record.name))
+			{
+				continue;
+			}
+			String key = SkillGroups.OTHER.equals(group)
+				? otherKey(record.category) : "item:" + record.category.name() + ":" + group;
+			ledger.mergeInto(record.key, key, group);
+		}
 	}
 
 	// ---------------------------------------------------------------- processing
@@ -375,7 +664,18 @@ public class SkillingTracker
 	 */
 	private void flushHeld()
 	{
+		flushEarly();
 		boolean held = !heldChanges.isEmpty() || !heldSupplies.isEmpty();
+		if (held && lastKey != null && heldSupplies.isEmpty() && onlyGains(heldChanges)
+			&& heldSinceTick - lastBookedTick <= TRAILING_GAIN_TICKS)
+		{
+			// Extra items right after an action with no XP of their own, like Runecrafting
+			// bonus runes (Raiments of the Eye, abyssal lantern): part of that action.
+			heldChanges.forEach((id, delta) ->
+				ledger.addLoot(lastKey, lastName, lastCategory, id, delta));
+			heldChanges.clear();
+			return;
+		}
 		if (held && (mode == Mode.PROCESSING || (mode == Mode.OTHER && isConversion(heldChanges))))
 		{
 			bookAction(new HashMap<>(heldChanges), new ArrayList<>(heldSupplies),
@@ -383,6 +683,11 @@ public class SkillingTracker
 		}
 		heldChanges.clear();
 		heldSupplies.clear();
+	}
+
+	private static boolean onlyGains(Map<Integer, Integer> changes)
+	{
+		return !changes.isEmpty() && changes.values().stream().allMatch(v -> v > 0);
 	}
 
 	private boolean isConversion(Map<Integer, Integer> changes)

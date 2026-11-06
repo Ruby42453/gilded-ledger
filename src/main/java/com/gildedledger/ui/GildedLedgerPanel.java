@@ -39,7 +39,6 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.ui.ColorScheme;
-import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
@@ -58,7 +57,13 @@ public class GildedLedgerPanel extends PluginPanel
 		/** Key is "sourceKey\nitemId": include or exclude a loot item from profit. */
 		TOGGLE_LOOT,
 		/** Key is "sourceKey\nsupplyLineKey": include or exclude a supply from profit. */
-		TOGGLE_SUPPLY
+		TOGGLE_SUPPLY,
+		SESSION_START, SESSION_PAUSE, SESSION_RESUME, SESSION_END,
+		/** Key is "sessionId\nnew title". */
+		SESSION_RENAME,
+		/** Key is the session id. */
+		SESSION_DELETE,
+		SESSION_CLEAR
 	}
 
 	private static final Color PROFIT_COLOR = ColorScheme.GRAND_EXCHANGE_PRICE;
@@ -86,6 +91,12 @@ public class GildedLedgerPanel extends PluginPanel
 	private final JPanel taskContainer = new JPanel(new BorderLayout());
 	private final JPanel topContainer = new JPanel(new BorderLayout());
 	private final JPanel sourceList = new JPanel();
+	/** The normal page; the session log replaces it while open. */
+	private final JPanel mainView = new JPanel(new BorderLayout(0, 10));
+	private final SessionPanel sessions;
+	private Map<String, PanelModel.SessionDetail> sessionDetails = new java.util.HashMap<>();
+	/** The session whose page is open, or null. */
+	private String openSession;
 
 	private final Set<String> collapsed = new HashSet<>();
 	private final Set<SourceCategory> collapsedCategories = EnumSet.noneOf(SourceCategory.class);
@@ -104,7 +115,8 @@ public class GildedLedgerPanel extends PluginPanel
 		this.actions = actions;
 
 		setBorder(new EmptyBorder(10, 10, 10, 10));
-		setLayout(new BorderLayout(0, 10));
+		setLayout(new BorderLayout());
+		sessions = new SessionPanel(actions, () -> showView(true), () -> showView(false), this::showSessionDetail);
 
 		JPanel top = new JPanel();
 		top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
@@ -113,7 +125,7 @@ public class GildedLedgerPanel extends PluginPanel
 		JLabel profitTitle = small("Total profit", ColorScheme.LIGHT_GRAY_COLOR);
 		profitTitle.setAlignmentX(LEFT_ALIGNMENT);
 		top.add(profitTitle);
-		totalProfit.setFont(FontManager.getRunescapeBoldFont().deriveFont(24f));
+		totalProfit.setFont(Fonts.bold(24f));
 		totalProfit.setAlignmentX(LEFT_ALIGNMENT);
 		top.add(totalProfit);
 		top.add(Box.createVerticalStrut(6));
@@ -121,11 +133,15 @@ public class GildedLedgerPanel extends PluginPanel
 		line.setAlignmentX(LEFT_ALIGNMENT);
 		for (JLabel label : new JLabel[]{totalLoot, totalSupplies, totalXp})
 		{
-			label.setFont(FontManager.getRunescapeSmallFont());
+			label.setFont(Fonts.small());
 			label.setBorder(new EmptyBorder(0, 0, 0, 10));
 			line.add(label);
 		}
 		top.add(line);
+		top.add(Box.createVerticalStrut(10));
+
+		// GP/hour session: timer, profit and the start / pause / end buttons.
+		top.add(sessions.card);
 		top.add(Box.createVerticalStrut(10));
 
 		taskContainer.setAlignmentX(LEFT_ALIGNMENT);
@@ -158,9 +174,105 @@ public class GildedLedgerPanel extends PluginPanel
 		bottom.add(folding);
 		bottom.add(resetAll);
 
-		add(top, BorderLayout.NORTH);
-		add(sourceList, BorderLayout.CENTER);
-		add(bottom, BorderLayout.SOUTH);
+		mainView.add(top, BorderLayout.NORTH);
+		mainView.add(sourceList, BorderLayout.CENTER);
+		mainView.add(bottom, BorderLayout.SOUTH);
+		mainView.setOpaque(false);
+		add(mainView, BorderLayout.CENTER);
+	}
+
+	/** Swaps between the main page and the session log. */
+	private void showView(boolean log)
+	{
+		openSession = null;
+		removeAll();
+		add(log ? sessions.logView : mainView, BorderLayout.CENTER);
+		revalidate();
+		repaint();
+	}
+
+	/** Called on the Swing thread: the GP/hour session as it stands, and the session log. */
+	public void updateSessions(com.gildedledger.data.GpSession live, List<com.gildedledger.data.GpSession> log,
+		Map<String, PanelModel.SessionDetail> details)
+	{
+		sessionDetails = details;
+		sessions.update(live, log);
+		if (openSession != null)
+		{
+			// Still on a session's page: redraw it, or go back if it was deleted.
+			com.gildedledger.data.GpSession still = log.stream()
+				.filter(x -> x.id.equals(openSession)).findFirst().orElse(null);
+			if (still == null)
+			{
+				showView(true);
+			}
+			else
+			{
+				showSessionDetail(still);
+			}
+		}
+	}
+
+	/** One session's page: its numbers, then all its loot and all its supplies as one table each. */
+	private void showSessionDetail(com.gildedledger.data.GpSession session)
+	{
+		PanelModel.SessionDetail detail = sessionDetails.get(session.id);
+		if (detail == null)
+		{
+			return;
+		}
+		openSession = session.id;
+		JPanel page = new JPanel();
+		page.setLayout(new BoxLayout(page, BoxLayout.Y_AXIS));
+		page.setOpaque(false);
+
+		JPanel top = new JPanel(new BorderLayout(6, 0));
+		top.setAlignmentX(LEFT_ALIGNMENT);
+		JButton back = new JButton("Back");
+		back.addActionListener(e -> showView(true));
+		top.add(back, BorderLayout.WEST);
+		JLabel name = new JLabel("<html>" + escapeHtml(session.title == null ? "Session" : session.title) + "</html>");
+		name.setFont(Fonts.bold());
+		name.setForeground(Color.WHITE);
+		top.add(name, BorderLayout.CENTER);
+		page.add(top);
+		page.add(Box.createVerticalStrut(8));
+
+		JPanel card = new JPanel();
+		card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+		card.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		card.setBorder(new EmptyBorder(8, 10, 8, 10));
+		card.setAlignmentX(LEFT_ALIGNMENT);
+		String when = new java.text.SimpleDateFormat("MMM d, h:mm a").format(new java.util.Date(session.endedMillis));
+		card.add(statLine("Ended", when, ColorScheme.LIGHT_GRAY_COLOR));
+		card.add(statLine("Time", SessionPanel.duration(session.activeMillis), ColorScheme.LIGHT_GRAY_COLOR));
+		card.add(statLine("Profit", (session.profit > 0 ? "+" : "") + gp(session.profit),
+			session.profit >= 0 ? PROFIT_COLOR : LOSS_COLOR));
+		long perHour = session.gpPerHour();
+		card.add(statLine("GP/hour", gp(perHour), perHour >= 0 ? PROFIT_COLOR : LOSS_COLOR));
+		card.add(statLine("XP", QuantityFormatter.quantityToStackSize(session.xp), ColorScheme.LIGHT_GRAY_COLOR));
+		page.add(card);
+		page.add(Box.createVerticalStrut(8));
+
+		page.add(sectionLine("Loot", gp(detail.lootValue), PROFIT_COLOR, "Everything gained during the session"));
+		page.add(lootGrid(null, detail.loot));
+		page.add(sectionLine("Supplies", gp(detail.supplyGp), LOSS_COLOR, "Everything used up during the session"));
+		page.add(supplyGrid(null, detail.supplies));
+
+		removeAll();
+		add(page, BorderLayout.NORTH);
+		revalidate();
+		repaint();
+	}
+
+	private static JPanel statLine(String label, String value, Color color)
+	{
+		JPanel line = new JPanel(new BorderLayout());
+		line.setOpaque(false);
+		line.setAlignmentX(LEFT_ALIGNMENT);
+		line.add(small(label, ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
+		line.add(small(value, color), BorderLayout.EAST);
+		return line;
 	}
 
 	/** Minimizes (or opens) every category, every monster box and Top sources at once. */
@@ -308,11 +420,11 @@ public class GildedLedgerPanel extends PluginPanel
 
 		JPanel head = row();
 		JLabel name = new JLabel(task.finished ? "Done: " + task.name : task.name);
-		name.setFont(FontManager.getRunescapeBoldFont());
+		name.setFont(Fonts.bold());
 		name.setForeground(task.finished ? ColorScheme.LIGHT_GRAY_COLOR : ColorScheme.BRAND_ORANGE);
 		head.add(name, BorderLayout.CENTER);
 		JLabel profit = new JLabel();
-		profit.setFont(FontManager.getRunescapeBoldFont());
+		profit.setFont(Fonts.bold());
 		setProfit(profit, task.profit());
 		head.add(profit, BorderLayout.EAST);
 		card.add(head);
@@ -387,7 +499,7 @@ public class GildedLedgerPanel extends PluginPanel
 		header.setBorder(new EmptyBorder(6, 8, 6, 8));
 		header.setAlignmentX(LEFT_ALIGNMENT);
 		JLabel title = new JLabel((topCollapsed ? "▸  " : "▾  ") + "Top sources");
-		title.setFont(FontManager.getRunescapeBoldFont());
+		title.setFont(Fonts.bold());
 		title.setForeground(ColorScheme.BRAND_ORANGE);
 		header.add(title, BorderLayout.WEST);
 		header.setToolTipText(topCollapsed ? "Show your most profitable sources" : "Hide");
@@ -422,15 +534,16 @@ public class GildedLedgerPanel extends PluginPanel
 		JPanel text = new JPanel(new GridLayout(2, 1));
 		text.setOpaque(false);
 		JLabel name = new JLabel(source.name);
-		name.setFont(FontManager.getRunescapeSmallFont());
+		name.setFont(Fonts.small());
 		name.setForeground(Color.WHITE);
 		text.add(name);
-		String detail = source.category.getLabel() + " · " + countText(source);
+		String detail = source.category == SourceCategory.COMBAT
+			? source.category.getLabel() + " · " + countText(source) : source.category.getLabel();
 		text.add(small(detail, ColorScheme.MEDIUM_GRAY_COLOR.brighter()));
 		row.add(text, BorderLayout.CENTER);
 
 		JLabel profit = new JLabel();
-		profit.setFont(FontManager.getRunescapeBoldFont());
+		profit.setFont(Fonts.bold());
 		setProfit(profit, source.profit());
 		row.add(profit, BorderLayout.EAST);
 		return row;
@@ -470,7 +583,7 @@ public class GildedLedgerPanel extends PluginPanel
 		setCategoryIcon(icon, category);
 		titleRow.add(icon);
 		JLabel title = new JLabel(category.getLabel());
-		title.setFont(FontManager.getRunescapeBoldFont());
+		title.setFont(Fonts.bold());
 		title.setForeground(Color.WHITE);
 		titleRow.add(title);
 		header.add(titleRow, BorderLayout.WEST);
@@ -478,7 +591,7 @@ public class GildedLedgerPanel extends PluginPanel
 		JPanel right = new JPanel(new GridLayout(xp > 0 ? 2 : 1, 1));
 		right.setOpaque(false);
 		JLabel profit = new JLabel();
-		profit.setFont(FontManager.getRunescapeBoldFont());
+		profit.setFont(Fonts.bold());
 		profit.setHorizontalAlignment(SwingConstants.RIGHT);
 		setProfit(profit, loot - supplies);
 		right.add(profit);
@@ -578,6 +691,8 @@ public class GildedLedgerPanel extends PluginPanel
 				return ItemID.COINS_10000;
 			case PROCESSING:
 				return ItemID.HAMMER;
+			case OTHER:
+				return ItemID.CASKET;
 			default:
 				return -1;
 		}
@@ -598,15 +713,18 @@ public class GildedLedgerPanel extends PluginPanel
 		header.setBorder(new EmptyBorder(7, 7, 7, 7));
 		header.setAlignmentX(LEFT_ALIGNMENT);
 		JLabel profit = new JLabel();
-		profit.setFont(FontManager.getRunescapeBoldFont());
+		profit.setFont(Fonts.bold());
 		profit.setVerticalAlignment(SwingConstants.TOP);
 		setProfit(profit, source.profit());
 		int nameWidth = Math.max(60, CONTENT_WIDTH - 14 - 4 - 8 - profit.getPreferredSize().width);
 		// Swing's HTML renders CSS pixels about a third wider than screen pixels.
+		// Kill counts only mean something for monsters.
+		String count = source.category == SourceCategory.COMBAT
+			? "&nbsp;&nbsp;<font color='#a5a5a5'>x&nbsp;" + QuantityFormatter.formatNumber(source.count) + "</font>"
+			: "";
 		JLabel name = new JLabel("<html><div style='width:" + (nameWidth * 3 / 4) + "px'>" + escapeHtml(source.name)
-			+ "&nbsp;&nbsp;<font color='#a5a5a5'>x&nbsp;" + QuantityFormatter.formatNumber(source.count)
-			+ "</font></div></html>");
-		name.setFont(FontManager.getRunescapeSmallFont());
+			+ count + "</div></html>");
+		name.setFont(Fonts.small());
 		name.setForeground(Color.WHITE);
 		name.setVerticalAlignment(SwingConstants.TOP);
 		header.add(name, BorderLayout.CENTER);
@@ -637,7 +755,7 @@ public class GildedLedgerPanel extends PluginPanel
 		if (!source.loot.isEmpty())
 		{
 			box.add(sectionLine("Loot", gp(source.lootValue), PROFIT_COLOR,
-				"GE value, or High Alchemy for untradeables. HA total: " + gp(source.lootHa)));
+				"GE value; untradeables count as 0 (tarnished items at High Alchemy). HA total: " + gp(source.lootHa)));
 			box.add(lootGrid(source.key, source.loot));
 		}
 		if (!source.supplies.isEmpty())
@@ -660,14 +778,10 @@ public class GildedLedgerPanel extends PluginPanel
 		JPanel table = new JPanel();
 		table.setLayout(new BoxLayout(table, BoxLayout.Y_AXIS));
 		table.setAlignmentX(LEFT_ALIGNMENT);
-		JPanel count = row();
-		count.setBorder(new EmptyBorder(2, 7, 0, 7));
-		count.add(small(countText(source), ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
-		table.add(count);
 		if (!source.loot.isEmpty())
 		{
 			table.add(sectionLine("Loot", gp(source.lootValue), PROFIT_COLOR,
-				"GE value, or High Alchemy for untradeables. HA total: " + gp(source.lootHa)));
+				"GE value; untradeables count as 0 (tarnished items at High Alchemy). HA total: " + gp(source.lootHa)));
 			table.add(lootGrid(source.key, source.loot));
 		}
 		if (!source.supplies.isEmpty())
@@ -707,8 +821,8 @@ public class GildedLedgerPanel extends PluginPanel
 			if (i < items.size())
 			{
 				PanelModel.LootView item = items.get(i);
-				grid.add(slot(item.itemId, item.quantity, lootTooltip(item), SLOT, item.excluded,
-					() -> actions.accept(Action.TOGGLE_LOOT, sourceKey + "\n" + item.itemId)));
+				grid.add(slot(item.itemId, item.quantity, lootTooltip(item), SLOT, item.excluded, sourceKey == null ? null
+					: () -> actions.accept(Action.TOGGLE_LOOT, sourceKey + "\n" + item.itemId)));
 			}
 			else
 			{
@@ -727,7 +841,8 @@ public class GildedLedgerPanel extends PluginPanel
 			{
 				PanelModel.SupplyView supply = supplies.get(i);
 				grid.add(slot(supply.itemId, supply.quantity, supplyTooltip(supply), SUPPLY_SLOT, supply.excluded,
-					() -> actions.accept(Action.TOGGLE_SUPPLY, sourceKey + "\n" + supply.lineKey)));
+					sourceKey == null ? null
+						: () -> actions.accept(Action.TOGGLE_SUPPLY, sourceKey + "\n" + supply.lineKey)));
 			}
 			else
 			{
@@ -773,6 +888,10 @@ public class GildedLedgerPanel extends PluginPanel
 			image.addTo(icon);
 		}
 		slot.add(icon, BorderLayout.CENTER);
+		if (toggle == null)
+		{
+			return slot;
+		}
 
 		JPopupMenu menu = new JPopupMenu();
 		JMenuItem item = new JMenuItem(excluded ? "Include in profit" : "Exclude from profit");
@@ -804,7 +923,7 @@ public class GildedLedgerPanel extends PluginPanel
 		{
 			JLabel bubble = new JLabel("<html>" + entry.getKey() + " <font color='#ffffff'>"
 				+ QuantityFormatter.formatNumber(entry.getValue()) + "</font></html>");
-			bubble.setFont(FontManager.getRunescapeSmallFont());
+			bubble.setFont(Fonts.small());
 			bubble.setForeground(ColorScheme.TEXT_COLOR);
 			bubble.setOpaque(true);
 			bubble.setBackground(BUBBLE);
@@ -942,7 +1061,7 @@ public class GildedLedgerPanel extends PluginPanel
 	private static JLabel small(String text, Color color)
 	{
 		JLabel label = new JLabel(text);
-		label.setFont(FontManager.getRunescapeSmallFont());
+		label.setFont(Fonts.small());
 		label.setForeground(color);
 		return label;
 	}
@@ -950,7 +1069,7 @@ public class GildedLedgerPanel extends PluginPanel
 	private static JLabel note(String text)
 	{
 		JLabel label = new JLabel("<html>" + text + "</html>");
-		label.setFont(FontManager.getRunescapeSmallFont());
+		label.setFont(Fonts.small());
 		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		label.setBorder(new EmptyBorder(8, 2, 8, 2));
 		label.setAlignmentX(LEFT_ALIGNMENT);

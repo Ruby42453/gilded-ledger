@@ -91,6 +91,9 @@ public class SupplyTracker
 	private final Sink sink;
 	private final Map<Integer, Pending> pending = new HashMap<>();
 	private final Map<Integer, Integer> tickRuneLoss = new HashMap<>();
+	/** Runes that left the rune pouch this tick, and those no spell used (for Runecrafting). */
+	private final Map<Integer, Integer> tickPouchLoss = new HashMap<>();
+	private final Map<Integer, Integer> unusedPouchRunes = new HashMap<>();
 	private int lastCastTick = Integer.MIN_VALUE / 2;
 	private int lastTeleportCastTick = Integer.MIN_VALUE / 2;
 	private String lastTeleportSpell;
@@ -165,6 +168,34 @@ public class SupplyTracker
 		}
 	}
 
+	/**
+	 * Runes taken from the rune pouch. A spell's runes are booked as usual; runes no spell
+	 * used (combination runecrafting draws its elemental runes from the pouch) are left for
+	 * {@link #takeUnusedPouchRunes()}.
+	 */
+	public void onPouchRunesLost(int runeItemId, int quantity)
+	{
+		onRunesLost(runeItemId, quantity);
+		if (quantity > 0)
+		{
+			tickPouchLoss.merge(runeItemId, quantity, Integer::sum);
+		}
+	}
+
+	/** Rune pouch runes used this tick by something other than a spell. */
+	public Map<Integer, Integer> takeUnusedPouchRunes()
+	{
+		Map<Integer, Integer> runes = new HashMap<>(unusedPouchRunes);
+		unusedPouchRunes.clear();
+		return runes;
+	}
+
+	/** A charge of something worn, priced per use (a binding necklace's 16 charges). */
+	public static Use charge(int itemId, String lineKey, String lineName, String unit, long quantity, long gp)
+	{
+		return new Use(Kind.CHARGES, itemId, lineKey, lineName, unit, quantity, gp);
+	}
+
 	/** Books this tick's rune losses if a spell was cast, then resets per-tick state. */
 	public void onGameTick(int tick)
 	{
@@ -186,6 +217,11 @@ public class SupplyTracker
 				lastTeleportSpell = null;
 			}
 		}
+		if (!cast)
+		{
+			tickPouchLoss.forEach((id, qty) -> unusedPouchRunes.merge(id, qty, Integer::sum));
+		}
+		tickPouchLoss.clear();
 		tickRuneLoss.clear();
 		magicXpThisTick = false;
 		pending.values().removeIf(p -> tick - p.tick > CONSUME_WINDOW_TICKS);

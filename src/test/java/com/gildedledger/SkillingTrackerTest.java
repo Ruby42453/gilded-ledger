@@ -96,7 +96,7 @@ public class SkillingTrackerTest
 		skilling.onInventoryChanged(change(RAW_TROUT, 1, FEATHER, -1));
 		skilling.onGameTick(2, YEW);
 
-		SourceRecord fly = ledger.data().sources.get("item:FISHING:Raw trout");
+		SourceRecord fly = ledger.data().sources.get("item:FISHING:Trout & salmon");
 		assertEquals(1L, (long) fly.loot.get(RAW_TROUT));
 		assertEquals(3, fly.supplyCost());
 	}
@@ -145,12 +145,12 @@ public class SkillingTrackerTest
 		assertEquals(SourceCategory.HUNTER, drift.category);
 		assertEquals(77L, (long) drift.xp.get("Fishing"));
 
-		// Runecrafting: essence in, runes out, filed by rune.
+		// Runecrafting: essence in, runes out, filed by altar.
 		skilling.onProcessClicked(3);
 		skilling.onInventoryChanged(change(ESSENCE, -28, NATURE_RUNE, 28));
 		skilling.onXp("Runecraft", 252);
 		skilling.onGameTick(4, null);
-		SourceRecord nature = ledger.data().sources.get("item:RUNECRAFTING:Nature rune");
+		SourceRecord nature = ledger.data().sources.get("item:RUNECRAFTING:Nature altar");
 		assertEquals(SourceCategory.RUNECRAFTING, nature.category);
 		assertEquals(28L, (long) nature.loot.get(NATURE_RUNE));
 		assertEquals(28 * 2, nature.supplyCost());
@@ -356,17 +356,17 @@ public class SkillingTrackerTest
 		InventoryDiff diff = change(RAW_TROUT, -3);
 		Map<Integer, Integer> dropped = drops.dropsIn(diff, 4);
 		dropped.forEach((id, amount) ->
-			assertEquals(3L, (long) ledger.removeDroppedLoot(id, -amount).get("item:FISHING:Raw trout")));
+			assertEquals(3L, (long) ledger.removeDroppedLoot(id, -amount).get("item:FISHING:Trout & salmon")));
 
 		assertTrue(diff.without(dropped).isEmpty());
-		assertEquals(2L, (long) ledger.data().sources.get("item:FISHING:Raw trout").loot.get(RAW_TROUT));
+		assertEquals(2L, (long) ledger.data().sources.get("item:FISHING:Trout & salmon").loot.get(RAW_TROUT));
 
 		// Dropping items the tracker never logged (picked up off the floor) changes nothing.
 		assertTrue(ledger.removeDroppedLoot(YEW_LOGS, 5).isEmpty());
 
 		// Dropping more than is left just empties the loot.
 		ledger.removeDroppedLoot(RAW_TROUT, 10);
-		assertFalse(ledger.data().sources.get("item:FISHING:Raw trout").loot.containsKey(RAW_TROUT));
+		assertFalse(ledger.data().sources.get("item:FISHING:Trout & salmon").loot.containsKey(RAW_TROUT));
 	}
 
 	@Test

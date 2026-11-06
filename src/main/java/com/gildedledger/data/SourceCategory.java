@@ -30,6 +30,8 @@ public enum SourceCategory
 	PROCESSING("Processing", "Made", null),
 	TELEPORTS("Teleports", "Uses", null),
 	GENERAL_SUPPLIES("General supplies", "Uses", null),
+	/** Minigame rewards that belong to no skill. */
+	OTHER("Other", "Rewards", null),
 	PURCHASE("Purchases", "Purchases", null);
 
 	private final String label;
@@ -57,6 +59,12 @@ public enum SourceCategory
 	public String getSkillName()
 	{
 		return skillName;
+	}
+
+	/** A skilling category, the kind "Hide skilling" hides (PvM and Farming have their own settings). */
+	public boolean isSkill()
+	{
+		return skillName != null && this != COMBAT && this != FARMING;
 	}
 
 	/** The skilling category for a skill name such as "Fletching", or null if there is none. */

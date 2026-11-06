@@ -1,6 +1,7 @@
 package com.gildedledger.tracking;
 
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -103,6 +104,97 @@ public final class ItemRules
 		String n = name.toLowerCase(Locale.ENGLISH);
 		return n.equals("coins") || n.equals("platinum token") || n.equals("tokkul") || n.equals("trading sticks")
 			|| n.equals("numulite") || n.equals("mark of grace") || n.equals("ecto-token") || n.equals("warrior guild token");
+	}
+
+	/** Reward currencies: never worth anything in the log, whatever their alch price. */
+	private static final Set<String> ZERO_VALUE_CURRENCIES = Set.of(
+		"mark of grace", "abyssal pearls", "molch pearl", "tokkul", "numulite", "trading sticks", "ecto-token",
+		"warrior guild token", "golden nugget", "unidentified minerals", "stardust", "hallowed mark",
+		"mermaid's tear", "termites", "agility arena ticket", "castle wars ticket", "pieces of eight",
+		"brimhaven voucher", "soul fragment", "frozen tear", "minnow", "barronite shards");
+
+	/**
+	 * Items valued at nothing: clue scrolls, caskets and their containers (their alch
+	 * price says nothing about the reward), and reward currencies like marks of grace.
+	 */
+	public static boolean isZeroValue(String name)
+	{
+		if (name == null)
+		{
+			return false;
+		}
+		String n = name.toLowerCase(Locale.ENGLISH).trim();
+		return n.startsWith("clue scroll") || n.startsWith("clue bottle") || n.startsWith("clue geode")
+			|| n.startsWith("clue nest") || n.startsWith("scroll box") || n.startsWith("reward casket")
+			|| n.startsWith("challenge scroll") || n.startsWith("puzzle box") || n.startsWith("light box")
+			|| ZERO_VALUE_CURRENCIES.contains(n);
+	}
+
+	/** Items that only exist inside a minigame and are gone when it ends. */
+	private static final Set<String> MINIGAME_ITEMS = Set.of(
+		// Guardians of the Rift
+		"guardian essence", "guardian fragments", "elemental guardian stone", "catalytic guardian stone",
+		"polyelemental guardian stone", "uncharged cell", "weak cell", "medium cell", "strong cell", "overcharged cell",
+		"portal talisman (air)", "portal talisman (water)", "portal talisman (earth)", "portal talisman (fire)",
+		"portal talisman (mind)", "portal talisman (chaos)", "portal talisman (death)", "portal talisman (blood)",
+		"portal talisman (body)", "portal talisman (cosmic)", "portal talisman (nature)", "portal talisman (law)",
+		// Wintertodt
+		"bruma root", "bruma kindling", "bruma herb", "rejuvenation potion (unf)",
+		// Tempoross
+		"raw harpoonfish", "harpoonfish", "bucket of water (tempoross)",
+		// Zalcano
+		"tephra", "refined tephra", "imbued tephra",
+		// Tithe Farm
+		"golovanova seed", "bologano seed", "logavano seed", "golovanova fruit", "bologano fruit", "logavano fruit",
+		"gricoller's can",
+		// Soul Wars and Castle Wars
+		"bandages", "barricade", "explosive potion", "castle wars bracelet",
+		// Mage Training Arena
+		"cube", "cylinder", "icosahedron", "pentamid", "animals' bones",
+		// Volcanic Mine and Giants' Foundry
+		"volcanic mine heat-proof vessel", "preform",
+		// Tombs of Amascut
+		"nectar", "silk dressing", "ambrosia", "tears of elidinis", "smelling salts", "liquid adrenaline",
+		"blessed crystal scarab", "honey locust",
+		// Chambers of Xeric
+		"stinkhorn mushroom", "endarkened juice", "cicely", "golpar", "buchu leaf", "noxifer", "grimy golpar",
+		"grimy buchu leaf", "grimy noxifer", "pysk fish (0)", "suphi fish (1)", "leckish fish (2)",
+		"brawk fish (3)", "mycil fish (4)", "roqed fish (5)", "kyren fish (6)", "guanic bat (0)", "prael bat (1)",
+		"giral bat (2)", "phluxia bat (3)", "kryket bat (4)", "murng bat (5)", "psykk bat (6)");
+
+	/** Minigame-only items: never loot, never a cost. */
+	public static boolean isMinigameItem(String name)
+	{
+		if (name == null)
+		{
+			return false;
+		}
+		String n = withoutDoses(name).toLowerCase(Locale.ENGLISH).trim();
+		// Chambers of Xeric potions are marked (+), (-) or plain ("Overload (+)(4)", "Elder (-)(2)").
+		return MINIGAME_ITEMS.contains(n) || n.endsWith("(+)") || n.endsWith("(-)")
+			|| n.startsWith("rejuvenation potion") || n.startsWith("potion of power")
+			|| n.startsWith("cooked pysk") || n.startsWith("cooked suphi") || n.startsWith("cooked leckish")
+			|| n.startsWith("cooked brawk") || n.startsWith("cooked mycil") || n.startsWith("cooked roqed")
+			|| n.startsWith("cooked kyren") || n.startsWith("raw pysk") || n.startsWith("raw suphi")
+			|| n.startsWith("raw leckish") || n.startsWith("raw brawk") || n.startsWith("raw mycil")
+			|| n.startsWith("raw roqed") || n.startsWith("raw kyren");
+	}
+
+	/** Tarnished items (a tarnished ring polishes into a real ring), valued at their alch price. */
+	public static boolean isTarnished(String name)
+	{
+		return name != null && name.toLowerCase(Locale.ENGLISH).startsWith("tarnished");
+	}
+
+	/** Runecrafting essence pouches, degraded or not; they degrade and get repaired. */
+	public static boolean isEssencePouch(String name)
+	{
+		if (name == null)
+		{
+			return false;
+		}
+		String n = name.toLowerCase(Locale.ENGLISH).trim();
+		return n.matches("(small|medium|large|giant|colossal) pouch.*");
 	}
 
 	public static boolean isCompost(String name)

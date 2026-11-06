@@ -12,4 +12,10 @@ public interface ItemInfo
 
 	/** Turns a noted or placeholder id into the base item id. */
 	int canonical(int itemId);
+
+	/** The item with exactly this name (ignoring case), or -1. */
+	default int idByName(String name)
+	{
+		return -1;
+	}
 }
