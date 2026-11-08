@@ -8,6 +8,7 @@ import com.gildedledger.data.GpSession;
 import com.gildedledger.data.SourceCategory;
 import com.gildedledger.tracking.Ledger;
 import com.gildedledger.tracking.SessionTracker;
+import com.gildedledger.tracking.ItemRules;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -129,7 +130,20 @@ public class SessionTrackerTest
 	}
 
 	@Test
-	public void restartingTheClientPausesWithoutCountingTheTimeAway()
+	public void restartingTheClientKeepsTheTimePlayedButNotTheTimeAway()
+	{
+		sessions.start();
+		craftBloods(2);
+		now += 5 * 60_000;
+		sessions.heartbeat(); // last tick before the client closed
+		now += 60 * 60_000; // closed for an hour
+		sessions.pauseAfterRestart();
+		assertEquals(5 * 60_000, sessions.active().activeMillis);
+		assertEquals(800, sessions.active().profit);
+	}
+
+	@Test
+	public void restartingWithNoTicksSeenCountsNoTime()
 	{
 		sessions.start();
 		craftBloods(2);
@@ -138,5 +152,14 @@ public class SessionTrackerTest
 		assertFalse(sessions.active().isRunning());
 		assertEquals(0, sessions.active().activeMillis);
 		assertEquals(800, sessions.active().profit);
+	}
+
+	@Test
+	public void bossPartsAreFiledUnderTheBoss()
+	{
+		assertEquals("Hespori", ItemRules.bossGroup("Flower"));
+		assertEquals("Zulrah", ItemRules.bossGroup("Snakeling"));
+		assertEquals("Grotesque Guardians", ItemRules.bossGroup("Dusk"));
+		assertEquals("Goblin", ItemRules.bossGroup("Goblin"));
 	}
 }

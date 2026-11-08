@@ -196,10 +196,20 @@ public final class PanelModel
 	public static PanelModel build(TrackerData data, LootPrices prices, IntFunction<String> itemName, boolean ready,
 		boolean combineSkills, java.util.Set<SourceCategory> hidden)
 	{
+		return build(data, prices, itemName, ready, combineSkills, r -> hidden.contains(r.category));
+	}
+
+	/**
+	 * @param hidden entries left out of the panel and its totals (still tracked): hidden
+	 *               skills, and untradeable plants when that setting is on
+	 */
+	public static PanelModel build(TrackerData data, LootPrices prices, IntFunction<String> itemName, boolean ready,
+		boolean combineSkills, java.util.function.Predicate<SourceRecord> hidden)
+	{
 		List<SourceView> views = new ArrayList<>();
-		for (SourceRecord record : displayRecords(data, combineSkills))
+		for (SourceRecord record : displayRecords(data, combineSkills, hidden))
 		{
-			if (hidden.contains(record.category))
+			if (hidden.test(record))
 			{
 				continue;
 			}
@@ -225,14 +235,16 @@ public final class PanelModel
 	}
 
 	/** The saved records, or with skills merged into one record per category for display. */
-	private static List<SourceRecord> displayRecords(TrackerData data, boolean combineSkills)
+	private static List<SourceRecord> displayRecords(TrackerData data, boolean combineSkills,
+		java.util.function.Predicate<SourceRecord> hidden)
 	{
 		List<SourceRecord> records = new ArrayList<>();
 		Map<SourceCategory, SourceRecord> combined = new EnumMap<>(SourceCategory.class);
 		for (SourceRecord record : data.sources.values())
 		{
-			if (record.isEmpty())
+			if (record.isEmpty() || (combineSkills && record.category != SourceCategory.COMBAT && hidden.test(record)))
 			{
+				// Hidden entries (an untradeable plant) stay out of their category's table too.
 				continue;
 			}
 			if (!combineSkills || record.category == SourceCategory.COMBAT)

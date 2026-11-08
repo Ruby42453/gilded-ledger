@@ -27,6 +27,8 @@ public class TrackerData
 	public int blowpipeDart;
 	/** Which crop was last planted in each farming patch, keyed by packed patch location. */
 	public Map<String, String> patchCrops = new LinkedHashMap<>();
+	/** Crops grown from untradeable seeds (quest plants like goutweed), hidden by a setting. */
+	public java.util.Set<String> untradeableCrops = new java.util.HashSet<>();
 	/** The GP/hour session in progress (running or paused), or null. */
 	public GpSession activeSession;
 	/** Finished GP/hour sessions, newest first. */

@@ -237,7 +237,8 @@ class SessionPanel
 		}
 		if (sessions.isEmpty())
 		{
-			JLabel empty = small("No sessions yet. Start one from the main page.", ColorScheme.LIGHT_GRAY_COLOR);
+			javax.swing.JTextArea empty = GildedLedgerPanel.wrapping("No sessions yet. Start one from the main page.",
+				ColorScheme.LIGHT_GRAY_COLOR);
 			empty.setAlignmentX(JPanel.LEFT_ALIGNMENT);
 			logList.add(empty);
 		}
@@ -258,24 +259,27 @@ class SessionPanel
 		box.setBorder(new EmptyBorder(6, 8, 6, 8));
 		box.setAlignmentX(JPanel.LEFT_ALIGNMENT);
 
-		JPanel first = row();
-		JLabel name = new JLabel(session.title == null ? "Session" : session.title);
+		// Name on its own line (wrapping if long), then when and how long, then profit and GP/hour,
+		// so nothing overlaps on a narrow panel.
+		javax.swing.JTextArea name = GildedLedgerPanel.wrapping(session.title == null ? "Session" : session.title,
+			java.awt.Color.WHITE);
 		name.setFont(Fonts.bold());
-		name.setForeground(java.awt.Color.WHITE);
-		first.add(name, BorderLayout.CENTER);
-		long perHour = session.gpPerHour();
-		JLabel rateLabel = small(QuantityFormatter.quantityToStackSize(perHour) + " gp/hr", perHour >= 0 ? PROFIT_COLOR : LOSS_COLOR);
-		first.add(rateLabel, BorderLayout.EAST);
-		box.add(first);
+		box.add(name);
 
 		JPanel second = row();
 		String when = new SimpleDateFormat("MMM d, h:mm a").format(new Date(session.endedMillis));
-		second.add(small(when + " · " + duration(session.activeMillis), ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
+		second.add(small(when, ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
+		second.add(small(duration(session.activeMillis), ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.EAST);
+		box.add(second);
+
+		JPanel third = row();
 		JLabel total = small("", PROFIT_COLOR);
 		setProfit(total, session.profit);
-		total.setFont(Fonts.small());
-		second.add(total, BorderLayout.EAST);
-		box.add(second);
+		third.add(total, BorderLayout.WEST);
+		long perHour = session.gpPerHour();
+		third.add(small(QuantityFormatter.quantityToStackSize(perHour) + " gp/hr", perHour >= 0 ? PROFIT_COLOR : LOSS_COLOR),
+			BorderLayout.EAST);
+		box.add(third);
 
 		JPopupMenu menu = new JPopupMenu();
 		JMenuItem rename = new JMenuItem("Rename session");
@@ -295,15 +299,18 @@ class SessionPanel
 		box.setComponentPopupMenu(menu);
 		for (java.awt.Component child : box.getComponents())
 		{
-			((JPanel) child).setInheritsPopupMenu(true);
-			for (java.awt.Component label : ((JPanel) child).getComponents())
+			((javax.swing.JComponent) child).setInheritsPopupMenu(true);
+			if (child instanceof JPanel)
 			{
-				((javax.swing.JComponent) label).setInheritsPopupMenu(true);
+				for (java.awt.Component label : ((JPanel) child).getComponents())
+				{
+					((javax.swing.JComponent) label).setInheritsPopupMenu(true);
+				}
 			}
 		}
 		box.setToolTipText("Click to see its loot and supplies; right-click to rename or delete");
 		box.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
-		box.addMouseListener(new java.awt.event.MouseAdapter()
+		java.awt.event.MouseAdapter open = new java.awt.event.MouseAdapter()
 		{
 			@Override
 			public void mouseClicked(java.awt.event.MouseEvent e)
@@ -313,7 +320,11 @@ class SessionPanel
 					openSession.accept(session);
 				}
 			}
-		});
+		};
+		box.addMouseListener(open);
+		// The wrapping title is a text area, which takes its own clicks: pass them on.
+		name.addMouseListener(open);
+		name.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
 		return box;
 	}
 

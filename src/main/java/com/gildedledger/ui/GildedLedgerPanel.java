@@ -13,7 +13,6 @@ import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
-import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -25,6 +24,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
@@ -98,14 +98,13 @@ public class GildedLedgerPanel extends PluginPanel
 	/** The session whose page is open, or null. */
 	private String openSession;
 
-	private final Set<String> collapsed = new HashSet<>();
-	private final Set<SourceCategory> collapsedCategories = EnumSet.noneOf(SourceCategory.class);
-	private boolean topCollapsed;
+	/** Entries opened up. Everything starts collapsed each time RuneLite starts. */
+	private final Set<String> expanded = new HashSet<>();
+	private boolean topCollapsed = true;
 	private PanelModel model;
 	/** Setting: new entries and categories start minimized. */
 	private boolean collapseNew;
 	private final Set<String> seenSources = new HashSet<>();
-	private final Set<SourceCategory> seenCategories = EnumSet.noneOf(SourceCategory.class);
 	private boolean primed;
 
 	public GildedLedgerPanel(ItemManager itemManager, SkillIconManager skillIconManager, BiConsumer<Action, String> actions)
@@ -122,19 +121,20 @@ public class GildedLedgerPanel extends PluginPanel
 		top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 
 		// Totals: profit as the headline, then loot, supplies and XP on one line.
-		JLabel profitTitle = small("Total profit", ColorScheme.LIGHT_GRAY_COLOR);
-		profitTitle.setAlignmentX(LEFT_ALIGNMENT);
-		top.add(profitTitle);
+		JPanel titleLine = row();
+		titleLine.add(small("Total profit", ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
+		titleLine.add(infoButton(), BorderLayout.EAST);
+		top.add(titleLine);
 		totalProfit.setFont(Fonts.bold(24f));
 		totalProfit.setAlignmentX(LEFT_ALIGNMENT);
 		top.add(totalProfit);
 		top.add(Box.createVerticalStrut(6));
-		JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		// Loot, supplies and total XP, one per line so nothing is cut off.
+		JPanel line = new JPanel(new GridLayout(3, 1, 0, 1));
 		line.setAlignmentX(LEFT_ALIGNMENT);
 		for (JLabel label : new JLabel[]{totalLoot, totalSupplies, totalXp})
 		{
 			label.setFont(Fonts.small());
-			label.setBorder(new EmptyBorder(0, 0, 0, 10));
 			line.add(label);
 		}
 		top.add(line);
@@ -163,15 +163,7 @@ public class GildedLedgerPanel extends PluginPanel
 			}
 		});
 
-		JButton collapseAll = new JButton("Collapse all");
-		collapseAll.addActionListener(e -> setAllCollapsed(true));
-		JButton expandAll = new JButton("Expand all");
-		expandAll.addActionListener(e -> setAllCollapsed(false));
-		JPanel folding = new JPanel(new GridLayout(1, 2, 4, 0));
-		folding.add(collapseAll);
-		folding.add(expandAll);
-		JPanel bottom = new JPanel(new GridLayout(2, 1, 0, 4));
-		bottom.add(folding);
+		JPanel bottom = new JPanel(new GridLayout(1, 1, 0, 4));
 		bottom.add(resetAll);
 
 		mainView.add(top, BorderLayout.NORTH);
@@ -185,10 +177,109 @@ public class GildedLedgerPanel extends PluginPanel
 	private void showView(boolean log)
 	{
 		openSession = null;
+		openCategory = null;
+		page = log ? Page.LOG : Page.MAIN;
+		show(log ? sessions.logView : mainView);
+		if (!log)
+		{
+			redraw();
+		}
+	}
+
+	/** Which page is showing. */
+	private enum Page
+	{
+		MAIN, CATEGORY, LOG, SESSION, INFO
+	}
+
+	private Page page = Page.MAIN;
+	/** The category whose page is open, or null. */
+	private SourceCategory openCategory;
+	private boolean sortByProfit;
+
+	private void show(JComponent content)
+	{
 		removeAll();
-		add(log ? sessions.logView : mainView, BorderLayout.CENTER);
+		add(content, BorderLayout.CENTER);
 		revalidate();
 		repaint();
+	}
+
+	/** The little "i" in the top right: opens the information page. */
+	private JLabel infoButton()
+	{
+		JLabel info = new JLabel("i", SwingConstants.CENTER);
+		info.setFont(Fonts.bold());
+		info.setForeground(ColorScheme.BRAND_ORANGE);
+		info.setPreferredSize(new Dimension(18, 18));
+		info.setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE));
+		info.setToolTipText("About Gilded Ledger");
+		info.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+		info.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				showInfo();
+			}
+		});
+		return info;
+	}
+
+	private void showInfo()
+	{
+		page = Page.INFO;
+		JPanel info = new JPanel();
+		info.setLayout(new BoxLayout(info, BoxLayout.Y_AXIS));
+		info.setOpaque(false);
+		info.add(backBar("Gilded Ledger", () -> showView(false)));
+		info.add(Box.createVerticalStrut(10));
+		JPanel card = new JPanel(new BorderLayout());
+		card.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		card.setBorder(new EmptyBorder(10, 10, 10, 10));
+		card.setAlignmentX(LEFT_ALIGNMENT);
+		JPanel lines = new JPanel();
+		lines.setLayout(new BoxLayout(lines, BoxLayout.Y_AXIS));
+		lines.setOpaque(false);
+		lines.add(wrapping("The plugin is still getting developed and fleshed out.", Color.WHITE));
+		lines.add(Box.createVerticalStrut(8));
+		lines.add(wrapping("If you encounter any bugs or have suggestions, please send me an email at:", Color.WHITE));
+		lines.add(Box.createVerticalStrut(4));
+		lines.add(wrapping("lucidicruby.plugins@gmail.com", ColorScheme.BRAND_ORANGE));
+		card.add(lines, BorderLayout.CENTER);
+		info.add(card);
+		show(info);
+	}
+
+	/** Text that wraps to the panel's width instead of running off its edge. */
+	static javax.swing.JTextArea wrapping(String text, Color color)
+	{
+		javax.swing.JTextArea area = new javax.swing.JTextArea(text);
+		area.setLineWrap(true);
+		area.setWrapStyleWord(true);
+		area.setEditable(false);
+		area.setFocusable(false);
+		area.setOpaque(false);
+		area.setBorder(null);
+		area.setFont(Fonts.small());
+		area.setForeground(color);
+		area.setAlignmentX(LEFT_ALIGNMENT);
+		return area;
+	}
+
+	/** A Back button with a title beside it. */
+	private JPanel backBar(String title, Runnable back)
+	{
+		JPanel bar = new FitHeightPanel(new BorderLayout(6, 0));
+		bar.setOpaque(false);
+		bar.setAlignmentX(LEFT_ALIGNMENT);
+		JButton button = new JButton("Back");
+		button.addActionListener(e -> back.run());
+		bar.add(button, BorderLayout.WEST);
+		javax.swing.JTextArea label = wrapping(title, Color.WHITE);
+		label.setFont(Fonts.bold());
+		bar.add(label, BorderLayout.CENTER);
+		return bar;
 	}
 
 	/** Called on the Swing thread: the GP/hour session as it stands, and the session log. */
@@ -222,6 +313,7 @@ public class GildedLedgerPanel extends PluginPanel
 			return;
 		}
 		openSession = session.id;
+		this.page = Page.SESSION;
 		JPanel page = new JPanel();
 		page.setLayout(new BoxLayout(page, BoxLayout.Y_AXIS));
 		page.setOpaque(false);
@@ -231,9 +323,8 @@ public class GildedLedgerPanel extends PluginPanel
 		JButton back = new JButton("Back");
 		back.addActionListener(e -> showView(true));
 		top.add(back, BorderLayout.WEST);
-		JLabel name = new JLabel("<html>" + escapeHtml(session.title == null ? "Session" : session.title) + "</html>");
+		javax.swing.JTextArea name = wrapping(session.title == null ? "Session" : session.title, Color.WHITE);
 		name.setFont(Fonts.bold());
-		name.setForeground(Color.WHITE);
 		top.add(name, BorderLayout.CENTER);
 		page.add(top);
 		page.add(Box.createVerticalStrut(8));
@@ -265,6 +356,107 @@ public class GildedLedgerPanel extends PluginPanel
 		repaint();
 	}
 
+	// ---------------------------------------------------------------- category pages
+
+	private void openCategory(SourceCategory category)
+	{
+		openCategory = category;
+		page = Page.CATEGORY;
+		redraw();
+	}
+
+	/** A category's own page: every entry, sorted by most recent or most profit, with folding buttons. */
+	private void showCategoryPage(List<PanelModel.SourceView> all)
+	{
+		SourceCategory category = openCategory;
+		List<PanelModel.SourceView> entries = visibleIn(all, category);
+		if (entries.isEmpty())
+		{
+			showView(false);
+			return;
+		}
+		JPanel pageBody = new JPanel();
+		pageBody.setLayout(new BoxLayout(pageBody, BoxLayout.Y_AXIS));
+		pageBody.setOpaque(false);
+
+		JPanel top = new FitHeightPanel(new BorderLayout(6, 0));
+		top.setOpaque(false);
+		top.setAlignmentX(LEFT_ALIGNMENT);
+		JButton back = new JButton("Back");
+		back.addActionListener(e -> showView(false));
+		top.add(back, BorderLayout.WEST);
+		JComboBox<String> sort = new JComboBox<>(new String[]{"Most recent", "Most profit"});
+		sort.setSelectedIndex(sortByProfit ? 1 : 0);
+		sort.addActionListener(e ->
+		{
+			sortByProfit = sort.getSelectedIndex() == 1;
+			redraw();
+		});
+		top.add(sort, BorderLayout.EAST);
+		pageBody.add(top);
+		pageBody.add(Box.createVerticalStrut(8));
+
+		pageBody.add(categoryHeader(category, all, false));
+		if (sortByProfit)
+		{
+			entries.sort(Comparator.comparingLong(PanelModel.SourceView::profit).reversed());
+		}
+		for (PanelModel.SourceView source : entries)
+		{
+			pageBody.add(Box.createVerticalStrut(4));
+			// Teleports and General supplies are one table; everything else has a box per monster or item.
+			boolean singleTable = category == SourceCategory.TELEPORTS || category == SourceCategory.GENERAL_SUPPLIES
+				|| source.key.startsWith(PanelModel.COMBINED_PREFIX);
+			pageBody.add(indented(singleTable ? categoryTable(source) : sourceBox(source)));
+		}
+		pageBody.add(Box.createVerticalStrut(8));
+
+		// One big table (Teleports, General supplies, or a skill shown as one table) has nothing to fold.
+		boolean foldable = entries.stream().anyMatch(source -> !(category == SourceCategory.TELEPORTS
+			|| category == SourceCategory.GENERAL_SUPPLIES || source.key.startsWith(PanelModel.COMBINED_PREFIX)));
+		if (foldable)
+		{
+			JButton collapseAll = new JButton("Collapse all");
+			collapseAll.addActionListener(e -> setAllCollapsed(entries, true));
+			JButton expandAll = new JButton("Expand all");
+			expandAll.addActionListener(e -> setAllCollapsed(entries, false));
+			JPanel folding = new JPanel(new GridLayout(1, 2, 4, 0));
+			folding.setAlignmentX(LEFT_ALIGNMENT);
+			folding.add(collapseAll);
+			folding.add(expandAll);
+			pageBody.add(folding);
+		}
+
+		removeAll();
+		add(pageBody, BorderLayout.NORTH);
+		revalidate();
+		repaint();
+	}
+
+	/**
+	 * A category's entries worth showing. Skill entries with XP but no loot or supplies
+	 * (minigame XP, an agility course) only count towards the category's XP.
+	 */
+	private static List<PanelModel.SourceView> visibleIn(List<PanelModel.SourceView> sources, SourceCategory category)
+	{
+		List<PanelModel.SourceView> visible = new ArrayList<>();
+		for (PanelModel.SourceView source : sources)
+		{
+			if (source.category == category && !isXpOnly(source))
+			{
+				visible.add(source);
+			}
+		}
+		return visible;
+	}
+
+	private static boolean isXpOnly(PanelModel.SourceView source)
+	{
+		boolean hideable = source.category.isSkill() || source.category == SourceCategory.FARMING
+			|| source.category == SourceCategory.OTHER;
+		return hideable && source.loot.isEmpty() && source.supplies.isEmpty();
+	}
+
 	private static JPanel statLine(String label, String value, Color color)
 	{
 		JPanel line = new JPanel(new BorderLayout());
@@ -276,20 +468,17 @@ public class GildedLedgerPanel extends PluginPanel
 	}
 
 	/** Minimizes (or opens) every category, every monster box and Top sources at once. */
-	private void setAllCollapsed(boolean collapse)
+	private void setAllCollapsed(List<PanelModel.SourceView> entries, boolean collapse)
 	{
-		collapsed.clear();
-		collapsedCategories.clear();
-		topCollapsed = collapse;
-		if (collapse)
+		for (PanelModel.SourceView source : entries)
 		{
-			collapsedCategories.addAll(EnumSet.allOf(SourceCategory.class));
-			if (model != null)
+			if (collapse)
 			{
-				for (PanelModel.SourceView source : model.sources)
-				{
-					collapsed.add(source.key);
-				}
+				expanded.remove(source.key);
+			}
+			else
+			{
+				expanded.add(source.key);
 			}
 		}
 		redraw();
@@ -316,13 +505,10 @@ public class GildedLedgerPanel extends PluginPanel
 	{
 		for (PanelModel.SourceView source : model.sources)
 		{
-			if (seenSources.add(source.key) && primed && collapseNew)
+			if (seenSources.add(source.key) && primed && !collapseNew)
 			{
-				collapsed.add(source.key);
-			}
-			if (seenCategories.add(source.category) && primed && collapseNew)
-			{
-				collapsedCategories.add(source.category);
+				// "Collapse new entries" off: something new shows up open.
+				expanded.add(source.key);
 			}
 		}
 		primed = primed || model.ready;
@@ -336,6 +522,15 @@ public class GildedLedgerPanel extends PluginPanel
 		}
 		List<PanelModel.SourceView> sources = new ArrayList<>(model.sources);
 		sources.sort(Comparator.comparingLong((PanelModel.SourceView s) -> s.lastUpdatedMillis).reversed());
+		if (page == Page.CATEGORY && openCategory != null)
+		{
+			showCategoryPage(sources);
+			return;
+		}
+		if (page != Page.MAIN)
+		{
+			return;
+		}
 
 		long loot = 0;
 		long supplies = 0;
@@ -378,32 +573,14 @@ public class GildedLedgerPanel extends PluginPanel
 		}
 		for (SourceCategory category : SourceCategory.values())
 		{
-			List<PanelModel.SourceView> inCategory = new ArrayList<>();
-			for (PanelModel.SourceView source : sources)
-			{
-				if (source.category == category)
-				{
-					inCategory.add(source);
-				}
-			}
-			if (inCategory.isEmpty())
+			// A category only shows once it has an entry with loot or supplies; XP alone
+			// (minigame XP, say) is counted in the category's XP but doesn't show it.
+			if (visibleIn(sources, category).isEmpty())
 			{
 				continue;
 			}
-			sourceList.add(categoryHeader(category, inCategory));
-			if (!collapsedCategories.contains(category))
-			{
-				for (PanelModel.SourceView source : inCategory)
-				{
-					sourceList.add(Box.createVerticalStrut(4));
-					// PvM has a box per monster; every other category is one combined table.
-					// Teleports and General supplies are one table; everything else has a box per monster or item.
-					boolean singleTable = category == SourceCategory.TELEPORTS || category == SourceCategory.GENERAL_SUPPLIES
-						|| source.key.startsWith(PanelModel.COMBINED_PREFIX);
-					sourceList.add(indented(singleTable ? categoryTable(source) : sourceBox(source)));
-				}
-			}
-			sourceList.add(Box.createVerticalStrut(8));
+			sourceList.add(categoryHeader(category, sources, true));
+			sourceList.add(Box.createVerticalStrut(6));
 		}
 		revalidate();
 		repaint();
@@ -437,7 +614,7 @@ public class GildedLedgerPanel extends PluginPanel
 
 		JPanel foot = row();
 		foot.add(small(task.kills + " killed", ColorScheme.LIGHT_GRAY_COLOR), BorderLayout.WEST);
-		foot.add(small(task.finished ? "complete" : task.remaining + " / " + total + " left", ColorScheme.LIGHT_GRAY_COLOR),
+		foot.add(small(task.finished ? "complete" : task.remaining + " left", ColorScheme.LIGHT_GRAY_COLOR),
 			BorderLayout.EAST);
 		card.add(foot);
 
@@ -498,10 +675,19 @@ public class GildedLedgerPanel extends PluginPanel
 		header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		header.setBorder(new EmptyBorder(6, 8, 6, 8));
 		header.setAlignmentX(LEFT_ALIGNMENT);
-		JLabel title = new JLabel((topCollapsed ? "▸  " : "▾  ") + "Top sources");
+		// The arrow is its own label: not every font has these arrow characters.
+		String arrowText = topCollapsed ? "▸" : "▾";
+		JLabel arrow = new JLabel(arrowText);
+		arrow.setFont(Fonts.thatCanShow(Fonts.bold(), arrowText));
+		arrow.setForeground(ColorScheme.BRAND_ORANGE);
+		JLabel title = new JLabel("Top sources");
 		title.setFont(Fonts.bold());
 		title.setForeground(ColorScheme.BRAND_ORANGE);
-		header.add(title, BorderLayout.WEST);
+		JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+		titleRow.setOpaque(false);
+		titleRow.add(arrow);
+		titleRow.add(title);
+		header.add(titleRow, BorderLayout.WEST);
 		header.setToolTipText(topCollapsed ? "Show your most profitable sources" : "Hide");
 		onPress(header, () ->
 		{
@@ -552,14 +738,17 @@ public class GildedLedgerPanel extends PluginPanel
 	// ---------------------------------------------------------------- categories
 
 	/** A collapsible title bar: icon and name, with profit and XP stacked on the right. */
-	private JPanel categoryHeader(SourceCategory category, List<PanelModel.SourceView> sources)
+	private JPanel categoryHeader(SourceCategory category, List<PanelModel.SourceView> all, boolean opensPage)
 	{
-		boolean open = !collapsedCategories.contains(category);
 		long loot = 0;
 		long supplies = 0;
 		long xp = 0;
-		for (PanelModel.SourceView s : sources)
+		for (PanelModel.SourceView s : all)
 		{
+			if (s.category != category)
+			{
+				continue;
+			}
 			loot += s.lootValue;
 			supplies += s.supplyGp;
 			xp += s.xp;
@@ -574,9 +763,6 @@ public class GildedLedgerPanel extends PluginPanel
 
 		JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 		titleRow.setOpaque(false);
-		JLabel arrow = new JLabel(open ? "▾" : "▸");
-		arrow.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		titleRow.add(arrow);
 		JLabel icon = new JLabel();
 		icon.setPreferredSize(new Dimension(20, 18));
 		icon.setHorizontalAlignment(SwingConstants.CENTER);
@@ -603,17 +789,15 @@ public class GildedLedgerPanel extends PluginPanel
 		}
 		header.add(right, BorderLayout.EAST);
 
-		header.setToolTipText(open
-			? "Click to minimize. Right-click to reset this category."
-			: "Click to show everything under " + category.getLabel() + ".");
-		onPress(header, () ->
+		if (opensPage)
 		{
-			if (!collapsedCategories.remove(category))
-			{
-				collapsedCategories.add(category);
-			}
-			redraw();
-		}, CATEGORY_BAR);
+			header.setToolTipText("Click to see everything under " + category.getLabel() + ". Right-click to reset it.");
+			onPress(header, () -> openCategory(category), CATEGORY_BAR);
+		}
+		else
+		{
+			header.setToolTipText("Right-click to reset this category.");
+		}
 
 		JPopupMenu menu = new JPopupMenu();
 		JMenuItem reset = new JMenuItem("Reset all " + category.getLabel());
@@ -732,12 +916,12 @@ public class GildedLedgerPanel extends PluginPanel
 		header.setToolTipText(source.category.getCountLabel() + ". Click to collapse, right-click to reset.");
 		box.add(header);
 
-		boolean open = !collapsed.contains(source.key);
+		boolean open = expanded.contains(source.key);
 		onPress(header, () ->
 		{
-			if (!collapsed.remove(source.key))
+			if (!expanded.remove(source.key))
 			{
-				collapsed.add(source.key);
+				expanded.add(source.key);
 			}
 			redraw();
 		}, TITLE_BAR);
@@ -1066,13 +1250,10 @@ public class GildedLedgerPanel extends PluginPanel
 		return label;
 	}
 
-	private static JLabel note(String text)
+	private static JComponent note(String text)
 	{
-		JLabel label = new JLabel("<html>" + text + "</html>");
-		label.setFont(Fonts.small());
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		javax.swing.JTextArea label = wrapping(text, ColorScheme.LIGHT_GRAY_COLOR);
 		label.setBorder(new EmptyBorder(8, 2, 8, 2));
-		label.setAlignmentX(LEFT_ALIGNMENT);
 		return label;
 	}
 

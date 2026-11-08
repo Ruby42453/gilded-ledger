@@ -21,6 +21,7 @@ public final class SkillGroups
 {
 	public static final String OTHER = "Other";
 	public static final String MOTHERLODE = "Motherlode Mine";
+	public static final String VALE_TOTEMS = "Vale Totems";
 
 	private static final Set<String> ALTAR_RUNES = Set.of(
 		"air", "mind", "water", "earth", "fire", "body", "cosmic", "chaos", "astral", "nature", "law", "death",

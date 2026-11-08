@@ -15,6 +15,7 @@ import com.gildedledger.tracking.InventoryDiff;
 import com.gildedledger.tracking.ItemInfo;
 import com.gildedledger.tracking.ItemRules;
 import com.gildedledger.tracking.Ledger;
+import com.gildedledger.tracking.LegacyTidy;
 import com.gildedledger.tracking.MinigameRewards;
 import com.gildedledger.tracking.RecentSupplies;
 import com.gildedledger.tracking.SessionTracker;
@@ -190,6 +191,9 @@ public class GildedLedgerPlugin extends Plugin
 	/** Every skill a potion can boost. Hitpoints (brews, anglers) and Prayer have their own handling. */
 	private static final Skill[] BOOSTED_SKILLS = boostableSkills();
 
+	private static final Set<Skill> COMBAT_BOOST_SKILLS = Set.of(
+		Skill.ATTACK, Skill.STRENGTH, Skill.DEFENCE, Skill.RANGED, Skill.MAGIC);
+
 	private static Skill[] boostableSkills()
 	{
 		List<Skill> skills = new ArrayList<>();
@@ -255,6 +259,11 @@ public class GildedLedgerPlugin extends Plugin
 	private int lastCombatTick = Integer.MIN_VALUE / 2;
 	/** When the current fight started, so supplies used just before it can follow the kill. */
 	private int fightStartTick = Integer.MIN_VALUE / 2;
+	/** Last Bury or Scatter click: that Prayer XP is the player's, not a bonecrusher's. */
+	private int buryClickTick = Integer.MIN_VALUE / 2;
+	/** When the player last entered an instance (a boss room), for boss-fight supplies. */
+	private int instanceEnteredTick = Integer.MIN_VALUE / 2;
+	private boolean wasInInstance;
 
 	private final Set<String> taskTargetNames = new HashSet<>();
 	private int loginTick;
@@ -319,6 +328,17 @@ public class GildedLedgerPlugin extends Plugin
 		farming = new FarmingTracker(ledger, itemInfo, compostIds);
 
 		skilling = new SkillingTracker(ledger, itemInfo);
+		// A boost drunk or eaten just before a skilling action (a dragonfruit pie before
+		// fletching) is that action's supply, if the action's skill is still boosted.
+		skilling.setActionListener((key, name, category) ->
+		{
+			Skill skill = skillFor(category);
+			if (skill != null && client.getBoostedSkillLevel(skill) > client.getRealSkillLevel(skill))
+			{
+				recentSupplies.moveGeneralTo(key, name, category, false,
+					client.getTickCount() - RecentSupplies.PRE_FIGHT_TICKS);
+			}
+		});
 		drops = new DropTracker();
 
 		buildPanel();
@@ -497,6 +517,7 @@ public class GildedLedgerPlugin extends Plugin
 		ledger.load(data);
 		farming.tidyUnknownCrops();
 		skilling.tidyGroups();
+		LegacyTidy.tidy(ledger, itemInfo);
 		sessions.pauseAfterRestart();
 		profileLoaded = configManager.getRSProfileKey() != null;
 		taskTargetNames.clear();
@@ -604,8 +625,17 @@ public class GildedLedgerPlugin extends Plugin
 
 		ledger.incrementCount(npcKey(name), name, SourceCategory.COMBAT);
 		// A potion before the fight, or charges spent before it registered as one: this kill's.
-		recentSupplies.moveGeneralToKill(npcKey(name), name, task,
-			fightStartTick - RecentSupplies.PRE_FIGHT_TICKS);
+		// Boss fights (a boss, or any kill inside an instance) can be long, so for those
+		// everything since entering the instance counts, up to 15 minutes before the kill.
+		int tickNow = client.getTickCount();
+		int since = fightStartTick - RecentSupplies.PRE_FIGHT_TICKS;
+		if (ItemRules.isBoss(name) || client.isInInstancedRegion())
+		{
+			int arrived = client.isInInstancedRegion() ? instanceEnteredTick : fightStartTick;
+			since = Math.max(Math.min(since, arrived - RecentSupplies.PRE_FIGHT_TICKS),
+				tickNow - RecentSupplies.BOSS_TICKS);
+		}
+		recentSupplies.moveGeneralToKill(npcKey(name), name, task, since);
 		if (task && ledger.data().currentTask != null && !ledger.data().currentTask.isFinished())
 		{
 			ledger.data().currentTask.kills++;
@@ -666,7 +696,12 @@ public class GildedLedgerPlugin extends Plugin
 			farming.onOtherAction();
 			return;
 		}
-		rewards.onOtherClick();
+		if (!event.isItemOp() && action != MenuAction.WALK && action != MenuAction.CC_OP
+			&& action != MenuAction.CC_OP_LOW_PRIORITY && action != MenuAction.WIDGET_CONTINUE)
+		{
+			// Clicking another object or NPC ends a reward pull; dropping junk or walking doesn't.
+			rewards.onOtherClick();
+		}
 
 		boolean spellbookOp = action == MenuAction.CC_OP || action == MenuAction.CC_OP_LOW_PRIORITY;
 		if (spellbookOp && !event.isItemOp() && SkillRules.isTeleportSpell(option, target))
@@ -818,6 +853,10 @@ public class GildedLedgerPlugin extends Plugin
 			drops.onDropClicked(itemId, tick);
 			return;
 		}
+		if (o.equals("bury") || o.equals("scatter"))
+		{
+			buryClickTick = tick;
+		}
 		if (SkillRules.isProcessingItemOption(o))
 		{
 			startProcessing(tick);
@@ -858,6 +897,10 @@ public class GildedLedgerPlugin extends Plugin
 			return;
 		}
 		ObjectComposition shown = base.getImpostorIds() != null ? base.getImpostor() : base;
+		if (shown != null && shown.getName() != null && shown.getName().toLowerCase(Locale.ENGLISH).contains("totem"))
+		{
+			skilling.onValeTotemClicked(tick);
+		}
 		if (shown == null)
 		{
 			shown = base;
@@ -1092,7 +1135,7 @@ public class GildedLedgerPlugin extends Plugin
 		diff.changes().forEach((id, delta) ->
 		{
 			String name = itemInfo.name(id);
-			if (ItemRules.isMinigameItem(name) || ItemRules.isEssencePouch(name))
+			if (ItemRules.isMinigameItem(name) || ItemRules.isDegrading(name))
 			{
 				ignored.put(id, delta);
 			}
@@ -1233,7 +1276,7 @@ public class GildedLedgerPlugin extends Plugin
 					continue;
 				}
 				String name = itemInfo.name(change.getKey());
-				if (base.equalsIgnoreCase(ItemRules.withoutDoses(name)) || "Vial".equalsIgnoreCase(name))
+				if (ItemRules.isLeftover(base, name))
 				{
 					explained.merge(change.getKey(), 1, Integer::sum);
 				}
@@ -1648,11 +1691,23 @@ public class GildedLedgerPlugin extends Plugin
 				return;
 			}
 		}
+		boolean fighting = combatKey != null && tick - lastCombatTick <= COMBAT_XP_WINDOW_TICKS;
+		if (skill == Skill.FARMING && fighting && FarmingTracker.HESPORI.equalsIgnoreCase(combatName))
+		{
+			// Killing Hespori gives Farming XP: Farming's, not the fight's.
+			ledger.addXp("farming:" + FarmingTracker.HESPORI, FarmingTracker.HESPORI, SourceCategory.FARMING,
+				skill.getName(), gained);
+			return;
+		}
+		if (skill == Skill.PRAYER && tick - buryClickTick > 5 && (fighting || !skilling.isActive())
+			&& bookCrusherCharge(gained))
+		{
+			return;
+		}
 		if (config.trackFarming())
 		{
 			farming.onXp(skill.getName(), gained);
 		}
-		boolean fighting = combatKey != null && tick - lastCombatTick <= COMBAT_XP_WINDOW_TICKS;
 		// Magic XP during a skilling action (alching mid-task, say) is that action's, not the fight's.
 		boolean magicForSkilling = skill == Skill.MAGIC && skilling.isActive();
 		boolean farmingXp = skill == Skill.FARMING
@@ -1766,6 +1821,16 @@ public class GildedLedgerPlugin extends Plugin
 		skilling.onGameTick(tick, localTile());
 		groundDrops.expire(tick);
 		recentSupplies.expire(tick);
+		if (profileLoaded)
+		{
+			sessions.heartbeat();
+		}
+		boolean inInstance = client.isInInstancedRegion();
+		if (inInstance && !wasInInstance)
+		{
+			instanceEnteredTick = tick;
+		}
+		wasInInstance = inInstance;
 		checkReminders(tick);
 
 		if (tick - loginTick > SLAYER_SETTLE_TICKS)
@@ -1793,6 +1858,10 @@ public class GildedLedgerPlugin extends Plugin
 		Map<String, Integer> divine = new HashMap<>();
 		for (Skill skill : BOOSTED_SKILLS)
 		{
+			if (config.boostReminderCombatOnly() && !COMBAT_BOOST_SKILLS.contains(skill))
+			{
+				continue;
+			}
 			boosts.put(skill.getName(), client.getBoostedSkillLevel(skill) - client.getRealSkillLevel(skill));
 			divine.put(skill.getName(), divinePotionTicks(skill));
 		}
@@ -1804,6 +1873,52 @@ public class GildedLedgerPlugin extends Plugin
 				+ (ending.size() == 1 ? " boost runs" : " boosts run") + " out in about "
 				+ config.boostReminderSeconds() + " seconds.");
 		}
+	}
+
+	/**
+	 * Prayer XP with no burying or scattering: a bonecrusher or ash sanctifier did it as a
+	 * monster died. Each one uses a charge (the ash sanctifier's are a tenth of a death rune;
+	 * the bonecrusher's ecto-tokens are worth nothing). Returns true if it was booked.
+	 */
+	private boolean bookCrusherCharge(long xp)
+	{
+		boolean crusher = carries("bonecrusher");
+		boolean sanctifier = carries("ash sanctifier");
+		if (!crusher && !sanctifier)
+		{
+			return false;
+		}
+		boolean ashes = sanctifier && (!crusher || ItemRules.isAshSanctifierXp(xp));
+		String name = ashes ? "Ash sanctifier" : "Bonecrusher";
+		int itemId = itemInfo.idByName(name);
+		long gp = ashes ? Math.round(itemInfo.marketPrice(ItemID.DEATHRUNE) / 10.0) : 0;
+		String key = "item:PRAYER:" + name;
+		ledger.addSupply(key, name, SourceCategory.PRAYER, name.toLowerCase(Locale.ENGLISH) + "-charge",
+			Math.max(itemId, 0), name, "charges", 1, gp);
+		ledger.addXp(key, name, SourceCategory.PRAYER, Skill.PRAYER.getName(), xp);
+		return true;
+	}
+
+	/** Is an item whose name starts with this carried (inventory or worn)? */
+	private boolean carries(String namePrefix)
+	{
+		for (int containerId : new int[]{InventoryID.INV, InventoryID.WORN})
+		{
+			ItemContainer container = client.getItemContainer(containerId);
+			if (container == null)
+			{
+				continue;
+			}
+			for (Item item : container.getItems())
+			{
+				if (item != null && item.getId() > 0
+					&& itemInfo.name(item.getId()).toLowerCase(Locale.ENGLISH).startsWith(namePrefix))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/** Sends a reminder's notification, plus the popup box saying what it's for. */
@@ -1849,6 +1964,23 @@ public class GildedLedgerPlugin extends Plugin
 				steps = 0;
 		}
 		return steps;
+	}
+
+	private static Skill skillFor(SourceCategory category)
+	{
+		String skillName = category == null ? null : category.getSkillName();
+		if (skillName == null)
+		{
+			return null;
+		}
+		for (Skill skill : Skill.values())
+		{
+			if (skill.getName().equalsIgnoreCase(skillName))
+			{
+				return skill;
+			}
+		}
+		return null;
 	}
 
 	/** "Attack", "Attack and Strength", "Attack, Strength and Defence". */
@@ -1978,10 +2110,7 @@ public class GildedLedgerPlugin extends Plugin
 			RecentSupplies.Booked booked = new RecentSupplies.Booked(TrackerData.GENERAL_SUPPLIES_KEY,
 				TrackerData.GENERAL_SUPPLIES_NAME, SourceCategory.GENERAL_SUPPLIES, false, use.lineKey, use.itemId,
 				use.lineName, use.unit, use.quantity, use.gp, tick, true);
-			if (config.trackCombat())
-			{
-				recentSupplies.addGeneral(booked);
-			}
+			recentSupplies.addGeneral(booked);
 			if (bookingBlowpipe)
 			{
 				recentSupplies.addBlowpipe(booked);
@@ -2188,8 +2317,13 @@ public class GildedLedgerPlugin extends Plugin
 			return;
 		}
 		shownRevision = ledger.revision();
+		Set<SourceCategory> hiddenCategories = hiddenCategories();
+		boolean hidePlants = config.hideUntradeablePlants();
+		Set<String> untradeableCrops = new HashSet<>(ledger.data().untradeableCrops);
 		PanelModel model = PanelModel.build(ledger.data(), lootPrices, itemInfo::name, profileLoaded,
-			config.skillLayout() == GildedLedgerConfig.SkillLayout.COMBINED, hiddenCategories());
+			config.skillLayout() == GildedLedgerConfig.SkillLayout.COMBINED,
+			record -> hiddenCategories.contains(record.category)
+				|| (hidePlants && record.category == SourceCategory.FARMING && untradeableCrops.contains(record.name)));
 		boolean collapseNew = config.collapseNew();
 		GpSession liveSession = profileLoaded ? sessions.live() : null;
 		List<GpSession> sessionLog = new ArrayList<>(ledger.data().sessionLog);
@@ -2331,7 +2465,8 @@ public class GildedLedgerPlugin extends Plugin
 			return null;
 		}
 		String name = Text.removeTags(npc.getName()).trim();
-		return name.isEmpty() || "null".equalsIgnoreCase(name) ? null : name;
+		// Parts of a boss fight (Hespori's flowers, Zulrah's snakelings) are filed under the boss.
+		return name.isEmpty() || "null".equalsIgnoreCase(name) ? null : ItemRules.bossGroup(name);
 	}
 
 	private static String npcKey(String name)
@@ -2445,6 +2580,13 @@ public class GildedLedgerPlugin extends Plugin
 		{
 			ItemComposition comp = itemManager.getItemComposition(itemId);
 			return comp != null && comp.isStackable();
+		}
+
+		@Override
+		public boolean tradeable(int itemId)
+		{
+			ItemComposition comp = itemManager.getItemComposition(itemManager.canonicalize(itemId));
+			return comp != null && comp.isTradeable();
 		}
 
 		@Override

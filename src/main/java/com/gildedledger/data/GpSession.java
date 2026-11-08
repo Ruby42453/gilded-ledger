@@ -19,6 +19,8 @@ public class GpSession
 	public long activeMillis;
 	/** When the current running stretch began; 0 while paused or finished. */
 	public long runningSinceMillis;
+	/** Last time the client was seen running this session (to keep its time if the client crashes). */
+	public long lastSeenMillis;
 	public long profit;
 	public long xp;
 	/** What each source did during the session: used to name it after the main activity. */

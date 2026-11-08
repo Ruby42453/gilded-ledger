@@ -292,8 +292,12 @@ public class FarmingTracker
 			return category == null || "Farming".equals(category)
 				? "Unknown crop" : category + " patch (unknown crop)";
 		}
-		return canonicalCrop(crop);
+		String name = canonicalCrop(crop);
+		// The Farming Guild's anima plants don't get their own entries.
+		return ANIMA_PLANTS.contains(name.toLowerCase(Locale.ENGLISH)) ? "Other" : name;
 	}
+
+	private static final Set<String> ANIMA_PLANTS = Set.of("attas", "kronos", "iasor");
 
 	/** Crops that grow as trees, so "Yew", "Yew sapling" and "Yew tree" all become "Yew tree". */
 	private static final Set<String> TREE_CROPS = Set.of(
@@ -384,6 +388,10 @@ public class FarmingTracker
 				if (harvested != null && (s.crop == null || name.toLowerCase(Locale.ENGLISH).startsWith("grimy ")))
 				{
 					setCrop(s, harvested);
+					if (!items.tradeable(id))
+					{
+						markUntradeable(s.crop);
+					}
 				}
 				ledger.addLoot(sourceKey(s), sourceName(s), SourceCategory.FARMING, id, delta);
 				countOnce(s);
@@ -401,6 +409,11 @@ public class FarmingTracker
 			if (delta < 0 && ItemRules.isPlantable(name))
 			{
 				setCrop(s, cropFromPlanted(name));
+				if (!items.tradeable(id))
+				{
+					// Quest plants (goutweed) and the like: hidden when the setting says so.
+					markUntradeable(s.crop);
+				}
 				bookCost(s, id, -delta, items.marketPrice(id) * -delta);
 				planted = true;
 			}
@@ -471,6 +484,23 @@ public class FarmingTracker
 		}
 	}
 
+	/**
+	 * Remembers a crop grown from an untradeable seed (or giving an untradeable harvest),
+	 * so "Hide untradeable plants" can hide it.
+	 */
+	private void markUntradeable(String crop)
+	{
+		if (crop != null && !HESPORI.equals(crop))
+		{
+			ledger.data().untradeableCrops.add(crop);
+		}
+	}
+
+
+	/** Hespori is a boss: its seed is a PvM supply, though its Farming XP stays in Farming. */
+	public static final String HESPORI = "Hespori";
+
+
 	private void setCrop(Session s, String crop)
 	{
 		crop = canonicalCrop(crop);
@@ -518,6 +548,13 @@ public class FarmingTracker
 	private void bookCost(Session s, int itemId, long quantity, long gp)
 	{
 		String name = items.name(itemId);
+		if ("hespori seed".equalsIgnoreCase(name))
+		{
+			// Planting Hespori is the start of a boss fight: the seed is the fight's cost.
+			ledger.addSupply("npc:" + HESPORI, HESPORI, SourceCategory.COMBAT,
+				String.valueOf(itemId), itemId, name, null, quantity, gp);
+			return;
+		}
 		ledger.addSupply(sourceKey(s), sourceName(s), SourceCategory.FARMING,
 			String.valueOf(itemId), itemId, name, null, quantity, gp);
 	}
@@ -610,7 +647,7 @@ public class FarmingTracker
 		}
 		for (SourceRecord record : farming)
 		{
-			String name = canonicalCrop(record.name);
+			String name = cropName(null, record.name);
 			String key = "farming:" + name;
 			if (key.equals(record.key))
 			{

@@ -55,6 +55,22 @@ public class SkillingTracker
 	private String lastName;
 	private SourceCategory lastCategory;
 	private int lastBookedTick = Integer.MIN_VALUE / 2;
+
+	/** Told about every action booked (so a boost drunk just before it can join it). */
+	public interface ActionListener
+	{
+		void onAction(String key, String name, SourceCategory category);
+	}
+
+	private ActionListener actionListener = (key, name, category) -> { };
+
+	public void setActionListener(ActionListener listener)
+	{
+		actionListener = listener;
+	}
+	private int lastTotemTick = Integer.MIN_VALUE / 2;
+	/** Fletching within 5 minutes of using a Vale totem is for the totems. */
+	static final int VALE_TOTEM_TICKS = 500;
 	/** Items gained within this many ticks after an action, with no XP of their own, are part of it. */
 	static final int TRAILING_GAIN_TICKS = 3;
 
@@ -473,6 +489,7 @@ public class SkillingTracker
 		lastName = name;
 		lastCategory = category;
 		lastBookedTick = currentTick;
+		actionListener.onAction(key, name, category);
 
 		boolean gained = false;
 		for (Map.Entry<Integer, Integer> change : changes.entrySet())
@@ -486,7 +503,13 @@ public class SkillingTracker
 			}
 			else if (delta < 0 && (!gathering || items.stackable(id)))
 			{
-				bookCost(key, name, category, id, -delta);
+				// Using up something this same entry made (a bow fletched, then offered to a
+				// Vale totem) takes it back off the loot instead of costing it twice.
+				long used = takeBackMadeItem(key, id, -delta);
+				if (-delta - used > 0)
+				{
+					bookCost(key, name, category, id, -delta - used);
+				}
 			}
 		}
 		// One action, whether it made something (a bow, a log) or only used something up (a log burned).
@@ -495,6 +518,28 @@ public class SkillingTracker
 			ledger.incrementCount(key, name, category);
 		}
 		bookXpAndSupplies(key, name, category, xp, supplies);
+	}
+
+	/** Removes up to {@code quantity} of an item from an entry's loot; returns how many it removed. */
+	private long takeBackMadeItem(String key, int itemId, long quantity)
+	{
+		com.gildedledger.data.SourceRecord record = ledger.data().sources.get(key);
+		if (record == null || !record.loot.containsKey(itemId))
+		{
+			return 0;
+		}
+		long removed = record.removeLoot(itemId, quantity, ledger.now());
+		if (removed > 0)
+		{
+			ledger.changed();
+		}
+		return removed;
+	}
+
+	/** A Vale totem was clicked: Fletching for the next few minutes is Vale Totems. */
+	public void onValeTotemClicked(int tick)
+	{
+		lastTotemTick = tick;
 	}
 
 	/**
@@ -549,6 +594,9 @@ public class SkillingTracker
 				int best = mostValuable(changes, true);
 				return best > 0 ? SkillGroups.creatureFromItem(items.name(best)) : null;
 			}
+			case FLETCHING:
+				// Logs, bows and shields made for and given to Vale totems: one entry.
+				return currentTick - lastTotemTick <= VALE_TOTEM_TICKS ? SkillGroups.VALE_TOTEMS : null;
 			case HERBLORE:
 			{
 				int best = mostValuable(changes, true);

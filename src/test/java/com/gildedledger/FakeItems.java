@@ -13,6 +13,20 @@ public class FakeItems implements ItemInfo
 	private final Map<Integer, Long> prices = new HashMap<>();
 	private final Set<Integer> stackable = new HashSet<>();
 	private final Map<Integer, Integer> noted = new HashMap<>();
+	private final java.util.Set<Integer> untradeable = new java.util.HashSet<>();
+
+	public FakeItems untradeable(int id, String name)
+	{
+		names.put(id, name);
+		untradeable.add(id);
+		return this;
+	}
+
+	@Override
+	public boolean tradeable(int itemId)
+	{
+		return !untradeable.contains(itemId);
+	}
 
 	public FakeItems add(int id, String name, long price)
 	{

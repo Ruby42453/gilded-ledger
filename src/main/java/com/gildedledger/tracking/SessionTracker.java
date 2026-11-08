@@ -108,8 +108,23 @@ public class SessionTracker
 		GpSession session = active();
 		if (session != null && session.isRunning())
 		{
+			// Count the time up to when the client was last seen running, not the time it was closed.
+			if (session.lastSeenMillis > session.runningSinceMillis)
+			{
+				session.activeMillis += session.lastSeenMillis - session.runningSinceMillis;
+			}
 			closeStretch(session, false);
 			ledger.changed();
+		}
+	}
+
+	/** Called every game tick: remembers that the session was still running now. */
+	public void heartbeat()
+	{
+		GpSession session = active();
+		if (session != null && session.isRunning())
+		{
+			session.lastSeenMillis = clock.getAsLong();
 		}
 	}
 

@@ -82,10 +82,13 @@ public class RecentSupplies
 		blowpipe.add(booked);
 	}
 
+	/** Boss fights can be long: supplies are kept this long (15 minutes) in case a boss dies. */
+	public static final int BOSS_TICKS = 1500;
+
 	/** Forgets general supplies too old to belong to any fight starting now. */
 	public void expire(int tick)
 	{
-		general.removeIf(b -> tick - b.tick > PRE_FIGHT_TICKS * 2);
+		general.removeIf(b -> tick - b.tick > BOSS_TICKS);
 	}
 
 	/**
@@ -93,6 +96,15 @@ public class RecentSupplies
 	 * so they move from General supplies to the monster (and the Slayer task if it's one).
 	 */
 	public void moveGeneralToKill(String key, String name, boolean task, int sinceTick)
+	{
+		moveGeneralTo(key, name, SourceCategory.COMBAT, task, sinceTick);
+	}
+
+	/**
+	 * Moves general supplies used since {@code sinceTick} to a source: the monster killed, or
+	 * a skilling action boosted by the potion or food (a dragonfruit pie before fletching).
+	 */
+	public void moveGeneralTo(String key, String name, SourceCategory category, boolean task, int sinceTick)
 	{
 		TrackerData data = ledger.data();
 		for (Iterator<Booked> it = general.iterator(); it.hasNext(); )
@@ -120,11 +132,11 @@ public class RecentSupplies
 			{
 				data.sources.remove(b.key);
 			}
-			ledger.source(key, name, SourceCategory.COMBAT)
+			ledger.source(key, name, category)
 				.addSupply(b.lineKey, b.itemId, b.lineName, b.unit, b.quantity, b.gp, ledger.now());
 			b.key = key;
 			b.name = name;
-			b.category = SourceCategory.COMBAT;
+			b.category = category;
 			b.task = task;
 			if (task)
 			{

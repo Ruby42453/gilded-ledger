@@ -59,10 +59,10 @@ public class MinigameRewardsTest
 		assertTrue(wintertodt.supplies.isEmpty());
 
 		// Long after, or after clicking something else, items are nothing to do with it.
-		assertFalse(rewards.onCarriedChanges(change(1515, 1), 60, ledger));
-		rewards.onRewardClicked(MinigameRewards.forTarget("Reward pool", "Fish"), 70);
+		assertFalse(rewards.onCarriedChanges(change(1515, 1), 75, ledger));
+		rewards.onRewardClicked(MinigameRewards.forTarget("Reward pool", "Fish"), 80);
 		rewards.onOtherClick();
-		assertFalse(rewards.onCarriedChanges(change(1515, 1), 71, ledger));
+		assertFalse(rewards.onCarriedChanges(change(1515, 1), 81, ledger));
 	}
 
 	@Test

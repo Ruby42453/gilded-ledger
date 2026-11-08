@@ -14,6 +14,8 @@ public class MinigameRewards
 {
 	/** How long after the click (or the last item received) a pull keeps paying out. */
 	static final int WINDOW_TICKS = 8;
+	/** Waiting for the first item: a Big-search can take a while to start paying out. */
+	static final int FIRST_ITEM_TICKS = 30;
 
 	/** A minigame and the category its rewards go to. */
 	public static final class Minigame
@@ -52,9 +54,15 @@ public class MinigameRewards
 	public static final Minigame MOTHERLODE = new Minigame(SkillGroups.MOTHERLODE, SourceCategory.MINING,
 		"item:MINING:" + SkillGroups.MOTHERLODE);
 
+	/** Vale Totems: the ents' offerings join the same entry as the logs and bows used. */
+	public static final Minigame VALE_TOTEMS = new Minigame(SkillGroups.VALE_TOTEMS, SourceCategory.FLETCHING,
+		"item:FLETCHING:" + SkillGroups.VALE_TOTEMS);
+
 	/** Reward objects and NPCs, by name. */
 	private static final Map<String, Minigame> TARGETS = Map.ofEntries(
 		Map.entry("rewards guardian", GOTR),
+		Map.entry("offerings", VALE_TOTEMS),
+		Map.entry("vale offerings", VALE_TOTEMS),
 		Map.entry("reward pool", TEMPOROSS),
 		Map.entry("reward cart", WINTERTODT),
 		Map.entry("reward crate", WINTERTODT),
@@ -116,7 +124,7 @@ public class MinigameRewards
 	public void onRewardClicked(Minigame minigame, int tick)
 	{
 		active = minigame;
-		untilTick = tick + WINDOW_TICKS;
+		untilTick = tick + FIRST_ITEM_TICKS;
 	}
 
 	/** Any other click ends the pull. */
@@ -153,7 +161,8 @@ public class MinigameRewards
 		if (gained)
 		{
 			ledger.incrementCount(active.key(), active.name, active.category);
-			untilTick = tick + WINDOW_TICKS;
+			// Big-searches keep going on their own: stay open while items keep coming.
+			untilTick = Math.max(untilTick, tick + WINDOW_TICKS * 2);
 		}
 		return true;
 	}

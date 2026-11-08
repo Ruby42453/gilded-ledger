@@ -47,6 +47,18 @@ public interface GildedLedgerConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "hideUntradeablePlants",
+		name = "Hide untradeable plants",
+		description = "Don't track plants grown from untradeable seeds, like quest plants (goutweed from My Arm's Big Adventure)",
+		section = trackingSection,
+		position = 2
+	)
+	default boolean hideUntradeablePlants()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "trackAmmo",
 		name = "Count ammunition",
 		description = "Count arrows, bolts, darts and other ammunition used in combat as supplies",
@@ -112,9 +124,19 @@ public interface GildedLedgerConfig extends Config
 	{
 		RUNESCAPE("RuneScape", "RuneScape"),
 		RUNESCAPE_LARGE("RuneScape (larger)", "RuneScape (larger)"),
-		SANS_SERIF("Sans-serif", "SansSerif"),
-		SERIF("Serif", "Serif"),
-		MONOSPACED("Monospaced", "Monospaced");
+		// The next three are fonts already on the computer; the rest come with the plugin.
+		SANS_SERIF("Arial", "Arial"),
+		SERIF("Times New Roman", "Times New Roman"),
+		MONOSPACED("Courier New", "Courier New"),
+		PIXELIFY_SANS("Pixelify Sans", "Pixelify Sans"),
+		SILKSCREEN("Silkscreen", "Silkscreen"),
+		VT323("VT323", "VT323"),
+		ROBOTO_CONDENSED("Roboto Condensed", "Roboto Condensed"),
+		BARLOW_SEMI_CONDENSED("Barlow Semi Condensed", "Barlow Semi Condensed"),
+		IBM_PLEX_SANS("IBM Plex Sans", "IBM Plex Sans"),
+		SOURCE_SANS("Source Sans 3", "Source Sans 3"),
+		JETBRAINS_MONO("JetBrains Mono", "JetBrains Mono"),
+		CINZEL("Cinzel", "Cinzel");
 
 		private final String label;
 		private final String family;
@@ -192,6 +214,18 @@ public interface GildedLedgerConfig extends Config
 	default int boostReminderSeconds()
 	{
 		return 30;
+	}
+
+	@ConfigItem(
+		keyName = "boostReminderCombatOnly",
+		name = "Combat boosts only",
+		description = "Only remind about boosts to combat skills (Attack, Strength, Defence, Ranged, Magic), not skilling boosts",
+		section = remindersSection,
+		position = 1
+	)
+	default boolean boostReminderCombatOnly()
+	{
+		return false;
 	}
 
 	@ConfigItem(

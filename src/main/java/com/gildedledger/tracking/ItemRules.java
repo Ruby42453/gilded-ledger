@@ -156,6 +156,8 @@ public final class ItemRules
 		// Tombs of Amascut
 		"nectar", "silk dressing", "ambrosia", "tears of elidinis", "smelling salts", "liquid adrenaline",
 		"blessed crystal scarab", "honey locust",
+		// Tears of Guthix
+		"stone bowl",
 		// Chambers of Xeric
 		"stinkhorn mushroom", "endarkened juice", "cicely", "golpar", "buchu leaf", "noxifer", "grimy golpar",
 		"grimy buchu leaf", "grimy noxifer", "pysk fish (0)", "suphi fish (1)", "leckish fish (2)",
@@ -180,6 +182,132 @@ public final class ItemRules
 			|| n.startsWith("raw roqed") || n.startsWith("raw kyren");
 	}
 
+	/** What's left in the inventory after eating or drinking: empty containers, and what's left of a pie or pizza. */
+	private static final Set<String> CONTAINERS = Set.of(
+		"vial", "pie dish", "bowl", "jug", "empty cup", "beer glass", "cocktail glass", "empty jug", "bucket",
+		"cake tin", "empty bowl");
+
+	/**
+	 * Is {@code gained} what's left of {@code eaten} (doses already removed)? "Half a dragonfruit
+	 * pie" after a dragonfruit pie, "1/2 anchovy pizza", "Slice of cake", a vial or a pie dish.
+	 */
+	public static boolean isLeftover(String eaten, String gained)
+	{
+		if (eaten == null || gained == null)
+		{
+			return false;
+		}
+		String e = eaten.toLowerCase(Locale.ENGLISH).replace("half a ", "").replace("1/2 ", "").trim();
+		String g = withoutDoses(gained).toLowerCase(Locale.ENGLISH).trim();
+		if (CONTAINERS.contains(g) || g.equals(e))
+		{
+			return true;
+		}
+		if (e.endsWith("cake") && (g.endsWith("cake") || g.startsWith("slice of")))
+		{
+			return true;
+		}
+		return g.contains(e) && (g.startsWith("half a ") || g.startsWith("1/2 ") || g.startsWith("2/3 "));
+	}
+
+	/**
+	 * Prayer XP an ash sanctifier gives (half of scattering fiery, vile, malicious, abyssal
+	 * or infernal ashes), allowing for XP rounding.
+	 */
+	public static boolean isAshSanctifierXp(long xp)
+	{
+		for (double half : new double[]{5, 12.5, 32.5, 42.5, 55})
+		{
+			if (Math.abs(xp - half) <= 0.5)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Bosses, whose fights can outlast the normal before-the-fight window. */
+	private static final Set<String> BOSSES = Set.of(
+		"abyssal sire", "alchemical hydra", "amoxliatl", "araxxor", "artio", "barrows", "bryophyta", "callisto",
+		"calvar'ion", "cerberus", "chaos elemental", "chaos fanatic", "commander zilyana", "corporeal beast",
+		"crazy archaeologist", "dagannoth prime", "dagannoth rex", "dagannoth supreme", "deranged archaeologist",
+		"duke sucellus", "general graardor", "giant mole", "grotesque guardians", "dusk", "dawn", "hespori",
+		"kalphite queen", "king black dragon", "kraken", "kree'arra", "k'ril tsutsaroth", "the leviathan",
+		"leviathan", "the whisperer", "whisperer", "vardorvis", "nex", "the nightmare", "phosani's nightmare",
+		"obor", "phantom muspah", "sarachnis", "scorpia", "scurrius", "skotizo", "spindel", "tempoross",
+		"thermonuclear smoke devil", "vene natis", "venenatis", "vet'ion", "vorkath", "zalcano", "zulrah",
+		"tztok-jad", "tzkal-zuk", "sol heredit", "the hueycoatl", "hueycoatl", "lunar moons", "blood moon",
+		"blue moon", "eclipse moon", "the royal titans", "royal titans", "branda the fire queen", "eldric the ice king",
+		"yama", "doom of mokhaiotl", "kalphite king", "galvek", "verzik vitur", "great olm",
+		"tumeken's warden", "elidinis' warden", "kephri", "zebak", "akkha", "ba-ba");
+
+	/** Monsters that are part of a boss fight, filed under the boss itself. */
+	private static final java.util.Map<String, String> BOSS_PARTS = java.util.Map.ofEntries(
+		java.util.Map.entry("flower", "Hespori"),
+		java.util.Map.entry("zombified spawn", "Vorkath"),
+		java.util.Map.entry("snakeling", "Zulrah"),
+		java.util.Map.entry("enormous tentacle", "Kraken"),
+		java.util.Map.entry("summoned soul", "Cerberus"),
+		java.util.Map.entry("respiratory system", "Abyssal Sire"),
+		java.util.Map.entry("scion", "Abyssal Sire"),
+		java.util.Map.entry("dusk", "Grotesque Guardians"),
+		java.util.Map.entry("dawn", "Grotesque Guardians"),
+		java.util.Map.entry("husk", "The Nightmare"),
+		java.util.Map.entry("parasite", "The Nightmare"),
+		java.util.Map.entry("dark energy core", "Corporeal Beast"),
+		java.util.Map.entry("spawn of sarachnis", "Sarachnis"),
+		java.util.Map.entry("skeleton hellhound", "Vet'ion"),
+		java.util.Map.entry("greater skeleton hellhound", "Vet'ion"),
+		java.util.Map.entry("scorpia's offspring", "Scorpia"),
+		java.util.Map.entry("scorpia's guardian", "Scorpia"),
+		java.util.Map.entry("vardorvis' head", "Vardorvis"),
+		java.util.Map.entry("yt-hurkot", "TzTok-Jad"),
+		java.util.Map.entry("sergeant strongstack", "General Graardor"),
+		java.util.Map.entry("sergeant steelwill", "General Graardor"),
+		java.util.Map.entry("sergeant grimspike", "General Graardor"),
+		java.util.Map.entry("starlight", "Commander Zilyana"),
+		java.util.Map.entry("growler", "Commander Zilyana"),
+		java.util.Map.entry("bree", "Commander Zilyana"),
+		java.util.Map.entry("flight kilisa", "Kree'arra"),
+		java.util.Map.entry("flockleader geerin", "Kree'arra"),
+		java.util.Map.entry("wingman skree", "Kree'arra"),
+		java.util.Map.entry("tstanon karlak", "K'ril Tsutsaroth"),
+		java.util.Map.entry("zakl'n gritch", "K'ril Tsutsaroth"),
+		java.util.Map.entry("balfrug kreeyath", "K'ril Tsutsaroth"),
+		java.util.Map.entry("fumus", "Nex"),
+		java.util.Map.entry("umbra", "Nex"),
+		java.util.Map.entry("cruor", "Nex"),
+		java.util.Map.entry("glacies", "Nex"),
+		java.util.Map.entry("branda the fire queen", "Royal Titans"),
+		java.util.Map.entry("eldric the ice king", "Royal Titans"),
+		java.util.Map.entry("hueycoatl tail", "The Hueycoatl"),
+		java.util.Map.entry("hueycoatl body", "The Hueycoatl"),
+		java.util.Map.entry("ahrim the blighted", "Barrows"),
+		java.util.Map.entry("dharok the wretched", "Barrows"),
+		java.util.Map.entry("guthan the infested", "Barrows"),
+		java.util.Map.entry("karil the tainted", "Barrows"),
+		java.util.Map.entry("torag the corrupted", "Barrows"),
+		java.util.Map.entry("verac the defiled", "Barrows"),
+		java.util.Map.entry("great olm (left claw)", "Great Olm"),
+		java.util.Map.entry("great olm (right claw)", "Great Olm"));
+
+	/** The boss a monster belongs to (Hespori's flowers → Hespori), or the name unchanged. */
+	public static String bossGroup(String npcName)
+	{
+		if (npcName == null)
+		{
+			return null;
+		}
+		String boss = BOSS_PARTS.get(npcName.toLowerCase(Locale.ENGLISH).trim());
+		return boss != null ? boss : npcName;
+	}
+
+	/** Is this NPC a boss? */
+	public static boolean isBoss(String npcName)
+	{
+		return npcName != null && BOSSES.contains(npcName.toLowerCase(Locale.ENGLISH).trim());
+	}
+
 	/** Tarnished items (a tarnished ring polishes into a real ring), valued at their alch price. */
 	public static boolean isTarnished(String name)
 	{
@@ -195,6 +323,20 @@ public final class ItemRules
 		}
 		String n = name.toLowerCase(Locale.ENGLISH).trim();
 		return n.matches("(small|medium|large|giant|colossal) pouch.*");
+	}
+
+	/**
+	 * Items that change into another version of themselves as they're used (a slayer
+	 * ring losing a charge, an essence pouch degrading): neither loot nor a cost.
+	 */
+	public static boolean isDegrading(String name)
+	{
+		if (name == null)
+		{
+			return false;
+		}
+		String n = name.toLowerCase(Locale.ENGLISH).trim();
+		return isEssencePouch(name) || n.startsWith("slayer ring");
 	}
 
 	public static boolean isCompost(String name)

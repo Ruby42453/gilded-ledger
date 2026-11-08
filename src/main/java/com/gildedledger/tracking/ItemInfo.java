@@ -13,6 +13,12 @@ public interface ItemInfo
 	/** Turns a noted or placeholder id into the base item id. */
 	int canonical(int itemId);
 
+	/** Can it be traded? */
+	default boolean tradeable(int itemId)
+	{
+		return true;
+	}
+
 	/** The item with exactly this name (ignoring case), or -1. */
 	default int idByName(String name)
 	{
