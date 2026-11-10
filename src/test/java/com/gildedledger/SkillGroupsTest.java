@@ -269,6 +269,10 @@ public class SkillGroupsTest
 	{
 		assertTrue(SkillRules.bagContents("Colossal pouch").test("Pure essence"));
 		assertFalse(SkillRules.bagContents("Colossal pouch").test("Lava rune"));
+		// Emptying only hides essence coming out; essence crafted right after still counts.
+		assertEquals(1, SkillRules.bagDirection("Empty"));
+		assertEquals(-1, SkillRules.bagDirection("Fill"));
+		assertEquals(0, SkillRules.bagDirection("Open"));
 		assertTrue(SkillRules.bagContents("Fish barrel").test("Raw shark"));
 		assertTrue(SkillRules.bagContents("Open log basket").test("Magic logs"));
 		assertTrue(SkillRules.bagContents("Open gem bag").test("Uncut diamond"));

@@ -172,6 +172,69 @@ public interface GildedLedgerConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "timeZoneChoice",
+		name = "Time zone",
+		description = "When the Day, Week and Month views start: 00:00 each day, Monday 00:00 and the 1st at 00:00. "
+			+ "UTC matches the game's daily reset. The others follow daylight saving where it applies (CST is CDT in summer).",
+		section = displaySection,
+		position = 4
+	)
+	default TimeZoneChoice timeZone()
+	{
+		return TimeZoneChoice.UTC;
+	}
+
+	enum TimeZoneChoice
+	{
+		UTC("UTC", "UTC", "UTC"),
+		GMT("GMT - UK", "GMT", "Europe/London"),
+		CET("CET - Central Europe", "CET", "Europe/Paris"),
+		EET("EET - Eastern Europe", "EET", "Europe/Helsinki"),
+		IST("IST - India", "IST", "Asia/Kolkata"),
+		SGT("SGT - Singapore", "SGT", "Asia/Singapore"),
+		JST("JST - Japan / Korea", "JST", "Asia/Tokyo"),
+		AWST("AWST - Western Australia", "AWST", "Australia/Perth"),
+		AEST("AEST - Eastern Australia", "AEST", "Australia/Sydney"),
+		NZST("NZST - New Zealand", "NZST", "Pacific/Auckland"),
+		BRT("BRT - Brazil", "BRT", "America/Sao_Paulo"),
+		AST("AST - Atlantic", "AST", "America/Halifax"),
+		EST("EST - US Eastern", "EST", "America/New_York"),
+		CST("CST - US Central", "CST", "America/Chicago"),
+		MST("MST - US Mountain", "MST", "America/Denver"),
+		PST("PST - US Pacific", "PST", "America/Los_Angeles"),
+		AKST("AKST - Alaska", "AKST", "America/Anchorage"),
+		HST("HST - Hawaii", "HST", "Pacific/Honolulu");
+
+		private final String label;
+		private final String shortName;
+		private final String zone;
+
+		TimeZoneChoice(String label, String shortName, String zone)
+		{
+			this.label = label;
+			this.shortName = shortName;
+			this.zone = zone;
+		}
+
+		/** The short name shown in the panel, e.g. "CST". */
+		public String getShortName()
+		{
+			return shortName;
+		}
+
+		public java.time.ZoneId getZone()
+		{
+			return java.time.ZoneId.of(zone);
+		}
+
+		@Override
+		public String toString()
+		{
+			return label;
+		}
+	}
+
+	@ConfigItem(
 		keyName = "collapseNew",
 		name = "Collapse new entries",
 		description = "New monsters, items and categories appear minimized in the panel",

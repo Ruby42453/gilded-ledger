@@ -18,6 +18,7 @@ import com.gildedledger.tracking.Ledger;
 import com.gildedledger.tracking.LegacyTidy;
 import com.gildedledger.tracking.MinigameRewards;
 import com.gildedledger.tracking.RecentSupplies;
+import com.gildedledger.tracking.PeriodTracker;
 import com.gildedledger.tracking.SessionTracker;
 import com.gildedledger.tracking.Reminders;
 import com.gildedledger.tracking.SkillGroups;
@@ -147,6 +148,11 @@ public class GildedLedgerPlugin extends Plugin
 		VarbitID.RUNE_POUCH_TYPE_1, VarbitID.RUNE_POUCH_TYPE_2, VarbitID.RUNE_POUCH_TYPE_3,
 		VarbitID.RUNE_POUCH_TYPE_4, VarbitID.RUNE_POUCH_TYPE_5, VarbitID.RUNE_POUCH_TYPE_6
 	};
+	/** How much essence each essence pouch holds (small to colossal). */
+	private static final int[] ESSENCE_POUCH_VARBITS = {
+		VarbitID.SMALL_ESSENCE_POUCH, VarbitID.MEDIUM_ESSENCE_POUCH, VarbitID.LARGE_ESSENCE_POUCH,
+		VarbitID.GIANT_ESSENCE_POUCH, VarbitID.COLOSSAL_ESSENCE_POUCH
+	};
 	private static final int[] POUCH_QUANTITY_VARBITS = {
 		VarbitID.RUNE_POUCH_QUANTITY_1, VarbitID.RUNE_POUCH_QUANTITY_2, VarbitID.RUNE_POUCH_QUANTITY_3,
 		VarbitID.RUNE_POUCH_QUANTITY_4, VarbitID.RUNE_POUCH_QUANTITY_5, VarbitID.RUNE_POUCH_QUANTITY_6
@@ -223,9 +229,31 @@ public class GildedLedgerPlugin extends Plugin
 	private final Map<Integer, Integer> tickChanges = new HashMap<>();
 	private final List<Integer> tickConsumed = new ArrayList<>();
 	private boolean storageThisTick;
+	/** A Sailors' amulet or Ring of the elements teleport clicked, waiting for the player to move. */
+	private String pendingJewelTeleport;
+	private int pendingJewelTick;
+	private WorldPoint pendingJewelFrom;
+	/** The click picked the destination itself (not "Rub"), so the next animation is the teleport. */
+	private boolean pendingJewelDirect;
+	/** The standard teleport animation (jewellery, tablets, standard spells). */
+	private static final int TELEPORT_ANIMATION = 714;
+	/** Last click on a deposit box, bank or deposit pool; items moved soon after are storage. */
+	private int storageClickTick = Integer.MIN_VALUE / 2;
+	/** Walking to a deposit box can take a while: its quick Deposit options count for 10 seconds. */
+	private static final int STORAGE_CLICK_TICKS = 16;
 	private final Map<Skill, Integer> lastXp = new EnumMap<>(Skill.class);
-	private final int[] pouchTypes = new int[POUCH_TYPE_VARBITS.length];
-	private final int[] pouchQuantities = new int[POUCH_QUANTITY_VARBITS.length];
+	/** The rune pouch's contents at the end of the last tick it changed in. */
+	private Map<Integer, Integer> pouchRunes;
+	private boolean pouchChanged;
+	/** Essence in all essence pouches together at the end of the last tick it changed in; -1 if unknown. */
+	private int essenceInPouches = -1;
+	private boolean essencePouchChanged;
+	/** The essence last seen carried, for naming essence that moved in or out of a pouch. */
+	private int lastEssenceId = -1;
+	/** The last bag clicked was an essence pouch. */
+	private boolean essencePouchClicked;
+	/** The tick essence last moved in or out of a pouch, as the pouches themselves report it. */
+	private int essencePouchMovedTick = Integer.MIN_VALUE / 2;
 	private int ammoId = -1;
 	private int ammoQty;
 	private int weaponId = -1;
@@ -251,6 +279,8 @@ public class GildedLedgerPlugin extends Plugin
 	private boolean bookingBlowpipe;
 	private RecentSupplies recentSupplies;
 	private SessionTracker sessions;
+	private PeriodTracker periods;
+	private PeriodTracker.Period period = PeriodTracker.Period.ALL;
 
 	// The monster the player is currently fighting.
 	private String combatKey;
@@ -270,10 +300,25 @@ public class GildedLedgerPlugin extends Plugin
 	private int slayerBlankCount;
 	private int paymentClickTick = Integer.MIN_VALUE / 2;
 	private int pouchClickTick = Integer.MIN_VALUE / 2;
+	/**
+	 * When the rune pouch itself was last opened or filled. Only that makes its own changes a
+	 * shuffle: emptying an essence pouch right before crafting must not hide runes crafted
+	 * into the rune pouch.
+	 */
+	private int runePouchClickTick = Integer.MIN_VALUE / 2;
 	/** What the last clicked bag or pouch holds; only those items are moved by it. */
 	private java.util.function.Predicate<String> pouchClickContents = name -> false;
+	/** +1: the click takes items out of the bag; -1: puts them in; 0: either (an "Open" screen). */
+	private int pouchClickDirection;
 	/** Seed box contents last seen, or null until it's first seen (so its contents aren't counted as new). */
 	private Map<Integer, Integer> lastSeedBox;
+	/** Ticks after logging in or hopping while carried items are still arriving from the game. */
+	private static final int SETTLE_TICKS = 5;
+	/** The next LOGGED_IN follows a login or a hop (not a region change), so wait for the items to arrive. */
+	private boolean needsSettle = true;
+	private int settleUntilTick = Integer.MIN_VALUE / 2;
+	private boolean invSeen;
+	private boolean wornSeen;
 	private int lastTeleportCastTick = Integer.MIN_VALUE / 2;
 	private long shownRevision = -1;
 
@@ -320,6 +365,15 @@ public class GildedLedgerPlugin extends Plugin
 		supplies = new SupplyTracker(itemInfo, this::bookSupply);
 		recentSupplies = new RecentSupplies(ledger);
 		sessions = new SessionTracker(ledger, lootPrices::value, System::currentTimeMillis);
+		periods = new PeriodTracker(ledger);
+		try
+		{
+			period = PeriodTracker.Period.valueOf(configManager.getConfiguration(GildedLedgerConfig.GROUP, "period"));
+		}
+		catch (IllegalArgumentException | NullPointerException e)
+		{
+			period = PeriodTracker.Period.ALL;
+		}
 
 		Map<String, Integer> compostIds = new HashMap<>();
 		compostIds.put("Compost", ItemID.BUCKET_COMPOST);
@@ -343,6 +397,7 @@ public class GildedLedgerPlugin extends Plugin
 
 		buildPanel();
 
+		needsSettle = client.getGameState() != GameState.LOGGED_IN;
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			clientThread.invoke(this::onLogin);
@@ -378,14 +433,25 @@ public class GildedLedgerPlugin extends Plugin
 	protected void shutDown()
 	{
 		// A session running when the plugin or client stops is paused, time counted up to now.
-		if (profileLoaded)
+		// If start-up failed part way, some of this was never set up: tidy only what exists.
+		if (profileLoaded && sessions != null)
 		{
 			sessions.pause();
 		}
 		save();
-		clientThread.invoke(popup::close);
-		clientToolbar.removeNavigation(navButton);
-		resetTransientState();
+		if (popup != null)
+		{
+			clientThread.invoke(popup::close);
+		}
+		if (navButton != null)
+		{
+			clientToolbar.removeNavigation(navButton);
+		}
+		if (drops != null)
+		{
+			// The last tracker start-up makes, so all the others exist too.
+			resetTransientState();
+		}
 		profileLoaded = false;
 		panel = null;
 		navButton = null;
@@ -401,16 +467,31 @@ public class GildedLedgerPlugin extends Plugin
 		lastGameState = state;
 		if (state == GameState.LOGGED_IN)
 		{
+			if (needsSettle)
+			{
+				// Only after logging in or hopping, when the game sends the inventory and worn
+				// items over a few ticks. Never after a plain region change (entering an altar,
+				// a teleport): a craft or kill right after loading must still count.
+				settleUntilTick = client.getTickCount() + SETTLE_TICKS;
+				needsSettle = false;
+			}
 			// LOADING -> LOGGED_IN is just a region change; keep baselines so no XP or items are missed.
 			if (previous != GameState.LOADING || !profileLoaded)
 			{
 				onLogin();
 			}
 		}
+		else if (state == GameState.CONNECTION_LOST)
+		{
+			needsSettle = true;
+		}
 		else if (state == GameState.LOGIN_SCREEN || state == GameState.HOPPING)
 		{
+			needsSettle = true;
 			save();
 			resetTransientState();
+			invSeen = false;
+			wornSeen = false;
 		}
 	}
 
@@ -685,6 +766,33 @@ public class GildedLedgerPlugin extends Plugin
 
 		String target = Text.removeTags(event.getMenuTarget());
 
+		// Depositing (a deposit box, bank chest or deposit pool's quick "Deposit" options, which
+		// never open the deposit screen) is storage, never a cost.
+		String optionLow = option.toLowerCase(Locale.ENGLISH);
+		String targetLow = target.toLowerCase(Locale.ENGLISH);
+		if (!event.isItemOp() && (optionLow.contains("deposit") || targetLow.contains("deposit")
+			|| targetLow.startsWith("bank ") || optionLow.startsWith("bank")))
+		{
+			storageClickTick = tick;
+		}
+		else if (!event.isItemOp() && action != MenuAction.WALK && action != MenuAction.CC_OP
+			&& action != MenuAction.CC_OP_LOW_PRIORITY && action != MenuAction.WIDGET_CONTINUE)
+		{
+			// Clicking something else (the altar, a rock) means depositing is over.
+			storageClickTick = Integer.MIN_VALUE / 2;
+		}
+
+		// Teleports from jewellery whose charges aren't in its name (the Sailors' amulet and the
+		// Ring of the elements): charged once the player actually moves away.
+		String jewel = clickedRechargeableJewel(target, option, event.getItemId());
+		if (jewel != null && !ItemRules.isNonTeleportOption(option) && client.getLocalPlayer() != null)
+		{
+			pendingJewelTeleport = jewel;
+			pendingJewelTick = tick;
+			pendingJewelDirect = !"rub".equalsIgnoreCase(option.trim());
+			pendingJewelFrom = client.getLocalPlayer().getWorldLocation();
+		}
+
 		// Minigame reward pulls: the Rewards Guardian, the Tempoross reward pool, a supply crate...
 		MinigameRewards.Minigame reward = event.isItemOp() && event.getItemId() > 0
 			? MinigameRewards.forItem(itemInfo.name(event.getItemId()), option)
@@ -709,6 +817,8 @@ public class GildedLedgerPlugin extends Plugin
 			// Teleport runes go to Teleports, and teleporting ends whatever you were doing.
 			supplies.onTeleportCast(SkillRules.teleportSpellName(option, target), tick);
 			lastTeleportCastTick = tick;
+			// A different teleport: a Sailors' amulet or ring click before it never went.
+			pendingJewelTeleport = null;
 			stopActivities();
 		}
 		else if (optionLower.startsWith("cast") || isSpellbookWidget(spellbookOp, event))
@@ -875,11 +985,18 @@ public class GildedLedgerPlugin extends Plugin
 		{
 			kind = SupplyTracker.Kind.TELEPORT;
 			stopActivities();
+			pendingJewelTeleport = null;
 		}
 		else if (SkillRules.isPouchShuffle(itemInfo.name(itemId), option))
 		{
+			essencePouchClicked = SkillRules.isEssencePouch(itemInfo.name(itemId));
 			pouchClickTick = tick;
 			pouchClickContents = SkillRules.bagContents(itemInfo.name(itemId));
+			pouchClickDirection = SkillRules.bagDirection(option);
+			if (itemInfo.name(itemId).toLowerCase(Locale.ENGLISH).contains("rune pouch"))
+			{
+				runePouchClickTick = tick;
+			}
 			return;
 		}
 		if (kind != null)
@@ -1052,7 +1169,7 @@ public class GildedLedgerPlugin extends Plugin
 	 */
 	private void accumulateCarriedChanges()
 	{
-		if (isStorageOpen())
+		if (isStorageOpen() || client.getTickCount() - storageClickTick <= STORAGE_CLICK_TICKS)
 		{
 			storageThisTick = true;
 		}
@@ -1060,7 +1177,27 @@ public class GildedLedgerPlugin extends Plugin
 		{
 			return;
 		}
+		boolean invHere = client.getItemContainer(InventoryID.INV) != null;
+		boolean wornHere = client.getItemContainer(InventoryID.WORN) != null;
+		boolean arrived = (invHere && !invSeen) || (wornHere && !wornSeen);
+		invSeen = invHere;
+		wornSeen = wornHere;
+		if (arrived)
+		{
+			// A container the game has only just sent (worn items after a hop) isn't a gain.
+			lastCarried = carriedCounts();
+			return;
+		}
 		Map<Integer, Integer> carried = carriedCounts();
+		for (int id : carried.keySet())
+		{
+			if (isEssence(id))
+			{
+				// Remembered so essence moving in or out of a pouch on its own is named right.
+				lastEssenceId = id;
+				break;
+			}
+		}
 		InventoryDiff.between(lastCarried, carried).changes()
 			.forEach((id, delta) -> tickChanges.merge(id, delta, Integer::sum));
 		lastCarried = carried;
@@ -1085,9 +1222,11 @@ public class GildedLedgerPlugin extends Plugin
 	/** Books everything carried items did this tick. Runs first on each GameTick. */
 	private void processCarriedChanges(int tick)
 	{
-		if (lastCarried == null)
+		if (lastCarried == null || tick <= settleUntilTick)
 		{
-			// First tick after login: both containers are loaded now, so take the baseline.
+			// Just logged in or hopped worlds: the game sends the inventory and worn items
+			// over the first few ticks, which would look like everything being gained.
+			// Keep re-taking the baseline until they've all arrived.
 			lastCarried = carriedCounts();
 			clearTickChanges();
 			return;
@@ -1148,13 +1287,25 @@ public class GildedLedgerPlugin extends Plugin
 
 		// Filling or emptying a pouch or bag (essence pouches, rune pouch, fish barrel, log
 		// basket, gem bag, herb sack, seed box) only moves items around. Only what that bag
-		// holds is ignored, so runes crafted right after emptying a pouch still count.
-		if (tick - pouchClickTick <= POUCH_WINDOW_TICKS)
+		// holds is ignored, so runes crafted right after emptying a pouch still count. And only
+		// the direction the click moves things: emptying a pouch hides the essence coming out,
+		// not the essence crafted a tick later.
+		// Essence pouches that report what they hold are already counted as carried, so their
+		// moves cancel out by themselves; the filter is only a fallback for when they don't.
+		boolean pooled = essencePouchClicked && essencePouchMovedTick == tick;
+		if (tick - pouchClickTick <= POUCH_WINDOW_TICKS || essencePouchMovedTick == tick)
+		{
+			log.debug("Gilded Ledger RC: tick {} carried {} pouch click {} ticks ago (direction {}, essence pouch {}), pooled {}",
+				tick, diff.changes(), tick - pouchClickTick, pouchClickDirection, essencePouchClicked, pooled);
+		}
+		if (tick - pouchClickTick <= POUCH_WINDOW_TICKS && !pooled)
 		{
 			Map<Integer, Integer> shuffled = new HashMap<>();
+			int direction = pouchClickDirection;
 			diff.changes().forEach((id, delta) ->
 			{
-				if (pouchClickContents.test(itemInfo.name(id)))
+				boolean rightWay = direction == 0 || Integer.signum(delta) == direction;
+				if (rightWay && pouchClickContents.test(itemInfo.name(id)))
 				{
 					shuffled.put(id, delta);
 				}
@@ -1173,6 +1324,11 @@ public class GildedLedgerPlugin extends Plugin
 		});
 		diff = diff.without(necklace);
 		bookBindingCharge(diff);
+		diff = diff.without(bookJewelleryCharges(diff));
+		if (diff.isEmpty())
+		{
+			return;
+		}
 
 		// Food eaten and potions drunk are already supplies; the leftover dose isn't loot.
 		diff = diff.without(consumedChanges(consumed, diff));
@@ -1225,8 +1381,187 @@ public class GildedLedgerPlugin extends Plugin
 		// While a patch is being worked, its changes are farming's, never a skill's.
 		if (!(config.trackFarming() && farming.isArmed()))
 		{
+			if (diff.changes().keySet().stream().anyMatch(id -> isEssence(id) || ItemRules.isRune(itemInfo.name(id), true)))
+			{
+				log.debug("Gilded Ledger RC: tick {} to skilling {}", tick, diff.changes());
+			}
 			skilling.onInventoryChanged(diff);
 		}
+	}
+
+	/**
+	 * Jewellery losing a charge: teleport jewellery stepping down a charge ("Games
+	 * necklace(8)" → "(7)", or crumbling after its last) is a teleport, costing the value
+	 * it lost; consumable jewellery breaking (a ring of recoil shattering) costs the item.
+	 * Returns the changes it accounted for.
+	 */
+	private Map<Integer, Integer> bookJewelleryCharges(InventoryDiff diff)
+	{
+		Map<Integer, Integer> handled = new HashMap<>();
+		Map<Integer, Integer> changes = diff.changes();
+		for (int[] step : ItemRules.jewelleryChargesUsed(changes, itemInfo::name))
+		{
+			int lostId = step[0];
+			int gainedId = step[1];
+			long lostValue = itemInfo.marketPrice(lostId);
+			long left = gainedId == -1 ? 0 : itemInfo.marketPrice(gainedId);
+			long gp = lostValue - left > 0 ? lostValue - left : lostValue / Math.max(1, step[2]);
+			String name = (String) ItemRules.teleportJewellery(itemInfo.name(lostId))[0];
+			ledger.addSupply(TrackerData.TELEPORTS_KEY, TrackerData.TELEPORTS_NAME, SourceCategory.TELEPORTS,
+				"charge:" + name, lostId, name, "charges", 1, gp);
+			ledger.incrementCount(TrackerData.TELEPORTS_KEY, TrackerData.TELEPORTS_NAME, SourceCategory.TELEPORTS);
+			handled.put(lostId, -1);
+			if (gainedId != -1)
+			{
+				handled.put(gainedId, 1);
+			}
+		}
+		for (Map.Entry<Integer, Integer> lost : changes.entrySet())
+		{
+			String lostName = itemInfo.name(lost.getKey());
+			if (lost.getValue() < 0 && ItemRules.isConsumableJewellery(lostName))
+			{
+				bookSupply(SupplyTracker.charge(lost.getKey(), "jewel:" + lostName, lostName, null, -lost.getValue(),
+					itemInfo.marketPrice(lost.getKey()) * -lost.getValue()));
+				handled.put(lost.getKey(), lost.getValue());
+			}
+		}
+		return handled;
+	}
+
+	/**
+	 * Drinking a stamina dose with a charged Ring of endurance on doubles it, using a charge
+	 * (two for an extended stamina dose). A charge is a stamina potion dose.
+	 */
+	private void bookEnduranceCharge(SupplyTracker.Use use)
+	{
+		String drunk = use.lineName == null ? itemInfo.name(use.itemId) : use.lineName;
+		int perDose = ItemRules.enduranceChargesPerDose(drunk);
+		if (perDose == 0 || use.quantity <= 0)
+		{
+			return;
+		}
+		ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		Item ring = worn == null ? null : worn.getItem(EquipmentInventorySlot.RING.getSlotIdx());
+		String ringName = ring == null ? "" : itemInfo.name(ring.getId());
+		if (!ringName.toLowerCase(Locale.ENGLISH).startsWith("ring of endurance") || ringName.toLowerCase(Locale.ENGLISH).contains("uncharged"))
+		{
+			return;
+		}
+		int stamina4 = itemInfo.idByName("Stamina potion(4)");
+		long chargeGp = stamina4 > 0 ? Math.round(itemInfo.marketPrice(stamina4) / 4.0) : 0;
+		long charges = perDose * use.quantity;
+		bookSupply(SupplyTracker.charge(ring.getId(), "ring-of-endurance-charge", "Ring of endurance", "charges",
+			charges, chargeGp * charges));
+	}
+
+	/**
+	 * Which Sailors' amulet or Ring of the elements a click teleports with, if any. Works for
+	 * "Rub" (and its dialogue), and for picking the destination straight from the menu, a
+	 * submenu or a Menu Entry Swapper swap, where the click may not name the item.
+	 */
+	private String clickedRechargeableJewel(String target, String option, int itemId)
+	{
+		String jewel = ItemRules.rechargeableTeleportJewellery(target);
+		if (jewel == null && itemId > 0)
+		{
+			jewel = ItemRules.rechargeableTeleportJewellery(itemInfo.name(itemId));
+		}
+		if (jewel != null)
+		{
+			return jewel;
+		}
+		String byDestination = ItemRules.rechargeableJewelForDestination(option);
+		return byDestination != null && isCarrying(byDestination) ? byDestination : null;
+	}
+
+	/** Whether the player is wearing or holding a charged one of this jewel. */
+	private boolean isCarrying(String jewel)
+	{
+		for (int id : new int[]{InventoryID.WORN, InventoryID.INV})
+		{
+			ItemContainer container = client.getItemContainer(id);
+			if (container == null)
+			{
+				continue;
+			}
+			for (Item item : container.getItems())
+			{
+				if (item != null && item.getId() > 0
+					&& jewel.equals(ItemRules.rechargeableTeleportJewellery(itemInfo.name(item.getId()))))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/** Books a Sailors' amulet or Ring of the elements teleport once the player has moved far. */
+	private void checkJewelTeleport(int tick)
+	{
+		if (pendingJewelTeleport == null)
+		{
+			return;
+		}
+		Player local = client.getLocalPlayer();
+		if (tick - pendingJewelTick > 50 || local == null)
+		{
+			// Never went (the menu was closed, or the dialogue cancelled).
+			pendingJewelTeleport = null;
+			return;
+		}
+		WorldPoint now = local.getWorldLocation();
+		if (now == null || pendingJewelFrom == null
+			|| (now.getPlane() == pendingJewelFrom.getPlane() && now.distanceTo(pendingJewelFrom) < 30))
+		{
+			return;
+		}
+		bookJewelTeleport();
+	}
+
+	/**
+	 * The player started teleporting after a Sailors' amulet or Ring of the elements click:
+	 * book the charge now, which also covers teleporting to where you already are.
+	 */
+	private void onTeleportAnimation(int animation)
+	{
+		if (pendingJewelTeleport == null || animation <= 0)
+		{
+			return;
+		}
+		int sinceClick = client.getTickCount() - pendingJewelTick;
+		if (animation == TELEPORT_ANIMATION || (pendingJewelDirect && sinceClick <= 5))
+		{
+			bookJewelTeleport();
+		}
+	}
+
+	private void bookJewelTeleport()
+	{
+		String name = pendingJewelTeleport;
+		pendingJewelTeleport = null;
+		if (name == null)
+		{
+			return;
+		}
+		long gp;
+		if (name.startsWith("Sailors"))
+		{
+			// 10 charges for a law rune and 10 water runes.
+			gp = Math.round((itemInfo.marketPrice(ItemID.LAWRUNE) + 10.0 * itemInfo.marketPrice(ItemID.WATERRUNE)) / 10);
+		}
+		else
+		{
+			// A charge is one each of air, earth, fire, water and law runes.
+			gp = itemInfo.marketPrice(ItemID.AIRRUNE) + itemInfo.marketPrice(ItemID.EARTHRUNE)
+				+ itemInfo.marketPrice(ItemID.FIRERUNE) + itemInfo.marketPrice(ItemID.WATERRUNE)
+				+ itemInfo.marketPrice(ItemID.LAWRUNE);
+		}
+		int itemId = Math.max(0, itemInfo.idByName(name));
+		ledger.addSupply(TrackerData.TELEPORTS_KEY, TrackerData.TELEPORTS_NAME, SourceCategory.TELEPORTS,
+			"charge:" + name, itemId, name, "charges", 1, gp);
+		ledger.incrementCount(TrackerData.TELEPORTS_KEY, TrackerData.TELEPORTS_NAME, SourceCategory.TELEPORTS);
 	}
 
 	/** Each combination-rune craft uses one of a worn binding necklace's 16 charges. */
@@ -1428,6 +1763,10 @@ public class GildedLedgerPlugin extends Plugin
 	@Subscribe
 	public void onAnimationChanged(AnimationChanged event)
 	{
+		if (tracking() && event.getActor() == client.getLocalPlayer())
+		{
+			onTeleportAnimation(event.getActor().getAnimation());
+		}
 		if (!tracking() || !config.trackAmmo() || event.getActor() != client.getLocalPlayer() || weaponId <= 0)
 		{
 			return;
@@ -1602,36 +1941,165 @@ public class GildedLedgerPlugin extends Plugin
 		}
 
 		int varbit = event.getVarbitId();
-		for (int i = 0; i < POUCH_QUANTITY_VARBITS.length; i++)
+		for (int essenceVarbit : ESSENCE_POUCH_VARBITS)
 		{
-			if (varbit == POUCH_TYPE_VARBITS[i])
+			if (varbit == essenceVarbit)
 			{
-				pouchTypes[i] = event.getValue();
-				pouchQuantities[i] = client.getVarbitValue(POUCH_QUANTITY_VARBITS[i]);
+				essencePouchChanged = true;
 				return;
 			}
-			if (varbit == POUCH_QUANTITY_VARBITS[i])
+		}
+		for (int i = 0; i < POUCH_QUANTITY_VARBITS.length; i++)
+		{
+			// The pouch is compared as a whole once per tick (see diffRunePouch): a slot can
+			// change rune and amount in one go (earth runes used up, mud runes in their place).
+			if (varbit == POUCH_TYPE_VARBITS[i] || varbit == POUCH_QUANTITY_VARBITS[i])
 			{
-				int lost = pouchQuantities[i] - event.getValue();
-				pouchQuantities[i] = event.getValue();
-				int runeId = pouchRuneId(pouchTypes[i]);
-				boolean pouchShuffle = client.getTickCount() - pouchClickTick <= POUCH_WINDOW_TICKS;
-				if (lost > 0 && runeId > 0 && !isStorageOpen() && !pouchShuffle)
-				{
-					supplies.onPouchRunesLost(runeId, lost);
-				}
+				pouchChanged = true;
 				return;
 			}
 		}
 	}
 
-	private void syncPouchBaseline()
+	/** Every rune in the rune pouch, by item, as the four slots stand now. */
+	private Map<Integer, Integer> readRunePouch()
 	{
+		Map<Integer, Integer> runes = new HashMap<>();
 		for (int i = 0; i < POUCH_TYPE_VARBITS.length; i++)
 		{
-			pouchTypes[i] = client.getVarbitValue(POUCH_TYPE_VARBITS[i]);
-			pouchQuantities[i] = client.getVarbitValue(POUCH_QUANTITY_VARBITS[i]);
+			int runeId = pouchRuneId(client.getVarbitValue(POUCH_TYPE_VARBITS[i]));
+			int quantity = client.getVarbitValue(POUCH_QUANTITY_VARBITS[i]);
+			if (runeId > 0 && quantity > 0)
+			{
+				runes.merge(runeId, quantity, Integer::sum);
+			}
 		}
+		return runes;
+	}
+
+	/**
+	 * Once a tick, after the pouch changed: runes that left it are used (a spell's, or a
+	 * combination rune's elemental runes), runes that arrived were crafted into it.
+	 * Filling or emptying it by hand, or at the bank, counts as neither.
+	 */
+	private void diffRunePouch()
+	{
+		if (!pouchChanged)
+		{
+			return;
+		}
+		pouchChanged = false;
+		Map<Integer, Integer> now = readRunePouch();
+		Map<Integer, Integer> before = pouchRunes;
+		pouchRunes = now;
+		boolean pouchShuffle = client.getTickCount() - runePouchClickTick <= POUCH_WINDOW_TICKS;
+		if (before == null || isStorageOpen() || pouchShuffle)
+		{
+			return;
+		}
+		log.debug("Gilded Ledger RC: tick {} rune pouch {} -> {}", client.getTickCount(), before, now);
+		java.util.Set<Integer> ids = new java.util.HashSet<>(before.keySet());
+		ids.addAll(now.keySet());
+		for (int runeId : ids)
+		{
+			int change = now.getOrDefault(runeId, 0) - before.getOrDefault(runeId, 0);
+			if (change < 0)
+			{
+				supplies.onPouchRunesLost(runeId, -change);
+			}
+			else if (change > 0)
+			{
+				onPouchRunesGained(runeId, change);
+			}
+		}
+	}
+
+	/**
+	 * Runes that appeared in the rune pouch without being put there by hand: crafted runes
+	 * that go straight into it. They count like runes landing in the inventory.
+	 */
+	private void onPouchRunesGained(int runeId, int quantity)
+	{
+		boolean pouchShuffle = client.getTickCount() - runePouchClickTick <= POUCH_WINDOW_TICKS;
+		if (runeId > 0 && quantity > 0 && !isStorageOpen() && !pouchShuffle && lastCarried != null)
+		{
+			tickChanges.merge(runeId, quantity, Integer::sum);
+		}
+	}
+
+	private void syncPouchBaseline()
+	{
+		pouchRunes = readRunePouch();
+		pouchChanged = false;
+		essenceInPouches = readEssencePouches();
+		essencePouchChanged = false;
+	}
+
+	private int readEssencePouches()
+	{
+		int total = 0;
+		for (int varbit : ESSENCE_POUCH_VARBITS)
+		{
+			total += Math.max(0, client.getVarbitValue(varbit));
+		}
+		return total;
+	}
+
+	/**
+	 * Essence pouches count as carried, like the inventory: emptying one moves essence from
+	 * the pouch to the inventory and changes nothing, while crafting uses essence wherever it
+	 * was, even when the pouch is emptied and the essence crafted in the same tick.
+	 */
+	private void diffEssencePouches()
+	{
+		if (!essencePouchChanged)
+		{
+			return;
+		}
+		essencePouchChanged = false;
+		int now = readEssencePouches();
+		int before = essenceInPouches;
+		essenceInPouches = now;
+		if (before < 0 || now == before || lastCarried == null || isStorageOpen())
+		{
+			return;
+		}
+		int essence = essenceIdForPouches();
+		log.debug("Gilded Ledger RC: tick {} essence pouches {} -> {} as item {} (storage open {})",
+			client.getTickCount(), before, now, essence, isStorageOpen());
+		if (essence > 0)
+		{
+			essencePouchMovedTick = client.getTickCount();
+			tickChanges.merge(essence, now - before, Integer::sum);
+		}
+	}
+
+	/** Which essence is in the pouches: the essence moving this tick, or the last carried. */
+	private int essenceIdForPouches()
+	{
+		for (int id : tickChanges.keySet())
+		{
+			if (isEssence(id))
+			{
+				lastEssenceId = id;
+				return id;
+			}
+		}
+		for (int id : lastCarried.keySet())
+		{
+			if (isEssence(id))
+			{
+				lastEssenceId = id;
+				return id;
+			}
+		}
+		return lastEssenceId > 0 ? lastEssenceId : itemInfo.idByName("Pure essence");
+	}
+
+	private boolean isEssence(int itemId)
+	{
+		String name = itemInfo.name(itemId);
+		return name != null && name.toLowerCase(Locale.ENGLISH).endsWith("essence");
 	}
 
 	private void syncEquipmentBaseline()
@@ -1807,6 +2275,8 @@ public class GildedLedgerPlugin extends Plugin
 		int tick = client.getTickCount();
 		updateCombatTarget(tick);
 		trackBlowpipe(tick);
+		diffRunePouch();
+		diffEssencePouches();
 		processCarriedChanges(tick);
 		supplies.onGameTick(tick);
 		// Runes taken from the rune pouch by no spell (combination runecrafting) cost the action.
@@ -1815,15 +2285,18 @@ public class GildedLedgerPlugin extends Plugin
 		{
 			Map<Integer, Integer> used = new HashMap<>();
 			pouchRunes.forEach((id, qty) -> used.put(id, -qty));
+			log.debug("Gilded Ledger RC: tick {} rune pouch runes used by no spell {}", tick, used);
 			skilling.onInventoryChanged(InventoryDiff.of(used));
 		}
 		farming.onGameTick(tick, localTile());
 		skilling.onGameTick(tick, localTile());
 		groundDrops.expire(tick);
 		recentSupplies.expire(tick);
+		checkJewelTeleport(tick);
 		if (profileLoaded)
 		{
 			sessions.heartbeat();
+			periods.tick(java.time.Instant.now(), timeZone());
 		}
 		boolean inInstance = client.isInInstancedRegion();
 		if (inInstance && !wasInInstance)
@@ -1919,6 +2392,35 @@ public class GildedLedgerPlugin extends Plugin
 			}
 		}
 		return false;
+	}
+
+	/** The time zone the Day, Week and Month views start in (UTC unless changed). */
+	private java.time.ZoneId timeZone()
+	{
+		GildedLedgerConfig.TimeZoneChoice choice = config.timeZone();
+		return choice == null ? java.time.ZoneOffset.UTC : choice.getZone();
+	}
+
+	/** "Since 00:00 UTC today", "Since Monday 00:00 UTC", "Since Nov 1, 00:00 UTC" or "All time". */
+	private String periodNote()
+	{
+		java.time.ZoneId zone = timeZone();
+		String zoneName = config.timeZone() == null ? "UTC" : config.timeZone().getShortName();
+		java.time.ZonedDateTime start = PeriodTracker.periodStart(period, java.time.Instant.now(), zone);
+		String date = start.format(java.time.format.DateTimeFormatter.ofPattern("MMM d"));
+		if (period == PeriodTracker.Period.DAY)
+		{
+			return "Since 00:00 " + zoneName + " today";
+		}
+		if (period == PeriodTracker.Period.WEEK)
+		{
+			return "Since Monday " + date + ", 00:00 " + zoneName;
+		}
+		if (period == PeriodTracker.Period.MONTH)
+		{
+			return "Since " + date + ", 00:00 " + zoneName;
+		}
+		return "All time";
 	}
 
 	/** Sends a reminder's notification, plus the popup box saying what it's for. */
@@ -2074,6 +2576,7 @@ public class GildedLedgerPlugin extends Plugin
 		{
 			return;
 		}
+		bookEnduranceCharge(use);
 		// Teleports are their own category, never charged to a monster, task or skill.
 		if (use.teleport != null)
 		{
@@ -2143,16 +2646,27 @@ public class GildedLedgerPlugin extends Plugin
 			{
 				case RESET_SOURCE:
 					ledger.remove(key);
+					periods.forget(key);
 					break;
 				case RESET_CATEGORY:
 					SourceCategory category = SourceCategory.valueOf(key);
+					java.util.List<String> removed = new java.util.ArrayList<>();
+					ledger.data().sources.values().forEach(r ->
+					{
+						if (r.category == category)
+						{
+							removed.add(r.key);
+						}
+					});
 					if (ledger.data().sources.values().removeIf(r -> r.category == category))
 					{
+						removed.forEach(periods::forget);
 						ledger.changed();
 					}
 					break;
 				case RESET_ALL:
 					ledger.data().sources.clear();
+					ledger.data().periodStarts.clear();
 					resetTaskTotals();
 					ledger.changed();
 					break;
@@ -2165,6 +2679,11 @@ public class GildedLedgerPlugin extends Plugin
 					break;
 				case SESSION_START:
 					sessions.start();
+					break;
+				case PERIOD:
+					period = PeriodTracker.Period.valueOf(key);
+					configManager.setConfiguration(GildedLedgerConfig.GROUP, "period", key);
+					refreshPanel(true);
 					break;
 				case SESSION_PAUSE:
 					sessions.pause();
@@ -2320,7 +2839,14 @@ public class GildedLedgerPlugin extends Plugin
 		Set<SourceCategory> hiddenCategories = hiddenCategories();
 		boolean hidePlants = config.hideUntradeablePlants();
 		Set<String> untradeableCrops = new HashSet<>(ledger.data().untradeableCrops);
-		PanelModel model = PanelModel.build(ledger.data(), lootPrices, itemInfo::name, profileLoaded,
+		if (profileLoaded)
+		{
+			periods.tick(java.time.Instant.now(), timeZone());
+		}
+		TrackerData shown = profileLoaded ? periods.view(period) : ledger.data();
+		PeriodTracker.Period shownPeriod = period;
+		String periodNote = periodNote();
+		PanelModel model = PanelModel.build(shown, lootPrices, itemInfo::name, profileLoaded,
 			config.skillLayout() == GildedLedgerConfig.SkillLayout.COMBINED,
 			record -> hiddenCategories.contains(record.category)
 				|| (hidePlants && record.category == SourceCategory.FARMING && untradeableCrops.contains(record.name)));
@@ -2338,6 +2864,7 @@ public class GildedLedgerPlugin extends Plugin
 			target.setCollapseNew(collapseNew);
 			target.update(model);
 			target.updateSessions(liveSession, sessionLog, sessionDetails);
+			target.setPeriod(shownPeriod, periodNote);
 		});
 	}
 

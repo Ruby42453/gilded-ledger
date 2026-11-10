@@ -69,6 +69,11 @@ public class SkillingTracker
 		actionListener = listener;
 	}
 	private int lastTotemTick = Integer.MIN_VALUE / 2;
+	/** The altar last crafted at, for crafts that can't tell on their own. */
+	private String lastAltar;
+	private int lastAltarTick = Integer.MIN_VALUE / 2;
+	/** A craft this soon (10 minutes) after the last one at a known altar is at the same altar. */
+	static final int SAME_ALTAR_TICKS = 1000;
 	/** Fletching within 5 minutes of using a Vale totem is for the totems. */
 	static final int VALE_TOTEM_TICKS = 500;
 	/** Items gained within this many ticks after an action, with no XP of their own, are part of it. */
@@ -558,7 +563,22 @@ public class SkillingTracker
 				{
 					return null;
 				}
-				return made.isEmpty() ? SkillGroups.OTHER : SkillGroups.runecraftingAltar(made, used);
+			{
+				String altar = made.isEmpty() ? SkillGroups.OTHER : SkillGroups.runecraftingAltar(made, used);
+				if (!SkillGroups.OTHER.equals(altar))
+				{
+					lastAltar = altar;
+					lastAltarTick = currentTick;
+				}
+				else if (lastAltar != null && currentTick - lastAltarTick <= SAME_ALTAR_TICKS)
+				{
+					// Can't tell from this craft alone (the runes went somewhere unseen, or no
+					// elemental rune was used): it's the altar crafted at a moment ago.
+					altar = lastAltar;
+					lastAltarTick = currentTick;
+				}
+				return altar;
+			}
 			case FISHING:
 			{
 				if (sessionGroup == null)

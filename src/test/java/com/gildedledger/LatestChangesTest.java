@@ -151,4 +151,56 @@ public class LatestChangesTest
 		assertEquals(1_500, ledger.data().sources.get("item:FLETCHING:Vale Totems").supplyCost());
 		assertNull(ledger.data().sources.get(TrackerData.GENERAL_SUPPLIES_KEY));
 	}
+
+	@Test
+	public void jewelleryCharges()
+	{
+		Object[] games = ItemRules.teleportJewellery("Games necklace(8)");
+		assertEquals("Games necklace", games[0]);
+		assertEquals(8, games[1]);
+		assertEquals("Amulet of glory", ItemRules.teleportJewellery("Amulet of glory(4)")[0]);
+		assertEquals(0, ItemRules.teleportJewellery("Amulet of glory")[1]);
+		assertEquals("Ring of wealth", ItemRules.teleportJewellery("Ring of wealth (5)")[0]);
+		assertEquals("Digsite pendant", ItemRules.teleportJewellery("Digsite pendant (3)")[0]);
+		assertNull(ItemRules.teleportJewellery("Slayer ring (8)"));
+		assertNull(ItemRules.teleportJewellery("Prayer potion(4)"));
+
+		assertEquals("Sailors' amulet", ItemRules.rechargeableTeleportJewellery("Sailors' amulet"));
+		assertNull(ItemRules.rechargeableTeleportJewellery("Sailors' amulet (inert)"));
+		assertEquals("Ring of the elements", ItemRules.rechargeableTeleportJewellery("Ring of the elements"));
+		// Destinations picked straight from the menu (worn options, submenus, Menu Entry Swapper).
+		assertEquals("Ring of the elements", ItemRules.rechargeableJewelForDestination("Water Altar"));
+		assertEquals("Ring of the elements", ItemRules.rechargeableJewelForDestination("Last Destination"));
+		assertEquals("Sailors' amulet", ItemRules.rechargeableJewelForDestination("Port Roberts"));
+		assertEquals("Sailors' amulet", ItemRules.rechargeableJewelForDestination("The Pandemonium"));
+		assertNull(ItemRules.rechargeableJewelForDestination("Rub"));
+		assertNull(ItemRules.rechargeableJewelForDestination("Wear"));
+		assertTrue(ItemRules.isNonTeleportOption("Wear"));
+		assertFalse(ItemRules.isNonTeleportOption("Last Destination"));
+
+		assertEquals(1, ItemRules.enduranceChargesPerDose("Stamina potion(3)"));
+		assertEquals(2, ItemRules.enduranceChargesPerDose("Extended stamina potion(1)"));
+		assertEquals(1, ItemRules.enduranceChargesPerDose("Stamina mix(2)"));
+		assertEquals(0, ItemRules.enduranceChargesPerDose("Super restore(4)"));
+
+		assertTrue(ItemRules.isConsumableJewellery("Ring of recoil"));
+		assertTrue(ItemRules.isConsumableJewellery("Bracelet of slaughter"));
+		assertFalse(ItemRules.isConsumableJewellery("Ring of suffering"));
+		assertTrue(com.gildedledger.tracking.SkillRules.isPouchShuffle("Rune pouch", "Open"));
+
+		java.util.Map<Integer, String> names = java.util.Map.of(1, "Games necklace(8)", 2, "Games necklace(7)",
+			3, "Ring of dueling(1)", 4, "Amulet of glory(1)", 5, "Amulet of glory", 6, "Ring of wealth (5)");
+		java.util.Map<Integer, Integer> changes = new HashMap<>();
+		changes.put(1, -1);
+		changes.put(2, 1);
+		changes.put(3, -1); // crumbled
+		changes.put(4, -1);
+		changes.put(5, 1);
+		changes.put(6, -1); // just put away, not a charge
+		java.util.List<int[]> used = ItemRules.jewelleryChargesUsed(changes, names::get);
+		assertEquals(3, used.size());
+		assertTrue(used.stream().anyMatch(u -> u[0] == 1 && u[1] == 2));
+		assertTrue(used.stream().anyMatch(u -> u[0] == 3 && u[1] == -1));
+		assertTrue(used.stream().anyMatch(u -> u[0] == 4 && u[1] == 5));
+	}
 }

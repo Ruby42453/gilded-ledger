@@ -157,6 +157,50 @@ public class SkillingTrackerTest
 	}
 
 	@Test
+	public void mudRunesWithPouchEarthRunesAreOneWaterAltarCraft()
+	{
+		int earth = 557;
+		int mud = 4698;
+		items.stackable(earth, "Earth rune", 5).stackable(mud, "Mud rune", 30);
+		skilling.onProcessClicked(1);
+		// The craft: essence from the inventory, earth runes from the rune pouch (a second
+		// diff the same tick), mud runes into the pouch or inventory, a binding charge.
+		skilling.onInventoryChanged(change(ESSENCE, -27, mud, 77));
+		skilling.onInventoryChanged(change(earth, -27));
+		skilling.onSupplyUsed(com.gildedledger.tracking.SupplyTracker.charge(5521, "binding-charge",
+			"Binding necklace", "charges", 1, 60));
+		skilling.onXp("Runecraft", 256);
+		skilling.onGameTick(2, null);
+
+		SourceRecord water = ledger.data().sources.get("item:RUNECRAFTING:Water altar");
+		assertEquals(77L, (long) water.loot.get(mud));
+		assertEquals(27L, water.supplies.get(String.valueOf(earth)).quantity);
+		assertEquals(27L, water.supplies.get(String.valueOf(ESSENCE)).quantity);
+		assertEquals(1L, water.supplies.get("binding-charge").quantity);
+		assertEquals(null, ledger.data().sources.get(SkillingTracker.otherKey(SourceCategory.RUNECRAFTING)));
+	}
+
+	@Test
+	public void unclearCraftGoesToTheAltarJustUsed()
+	{
+		int earth = 557;
+		int mud = 4698;
+		items.stackable(earth, "Earth rune", 5).stackable(mud, "Mud rune", 30);
+		skilling.onProcessClicked(1);
+		skilling.onInventoryChanged(change(ESSENCE, -27, earth, -27, mud, 27));
+		skilling.onXp("Runecraft", 256);
+		skilling.onGameTick(2, null);
+		// The next craft's elemental runes weren't seen: still the Water altar, not Other.
+		skilling.onInventoryChanged(change(ESSENCE, -20, mud, 20));
+		skilling.onXp("Runecraft", 190);
+		skilling.onGameTick(20, null);
+
+		SourceRecord water = ledger.data().sources.get("item:RUNECRAFTING:Water altar");
+		assertEquals(47L, (long) water.loot.get(mud));
+		assertEquals(null, ledger.data().sources.get(SkillingTracker.otherKey(SourceCategory.RUNECRAFTING)));
+	}
+
+	@Test
 	public void actionsWithoutXpAreProcessing()
 	{
 		skilling.onProcessClicked(1);

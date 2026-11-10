@@ -226,6 +226,134 @@ public final class ItemRules
 		return false;
 	}
 
+	/** Teleport jewellery whose charges are in its name: "Games necklace(8)" → "Games necklace(7)". */
+	private static final Set<String> TELEPORT_JEWELLERY = Set.of(
+		"games necklace", "ring of dueling", "amulet of glory", "amulet of glory (t)", "skills necklace",
+		"combat bracelet", "digsite pendant", "necklace of passage", "burning amulet", "ring of wealth",
+		"ring of returning", "camulet");
+
+	private static final java.util.regex.Pattern CHARGES = java.util.regex.Pattern.compile("^(.*?)\\s*\\((\\d+)\\)$");
+
+	/** The kind of teleport jewellery ("Games necklace") and its charges, or null if it isn't one. */
+	public static Object[] teleportJewellery(String name)
+	{
+		if (name == null)
+		{
+			return null;
+		}
+		java.util.regex.Matcher m = CHARGES.matcher(name.trim());
+		String base = m.matches() ? m.group(1).trim() : name.trim();
+		int charges = m.matches() ? Integer.parseInt(m.group(2)) : 0;
+		String lower = base.toLowerCase(Locale.ENGLISH).replace(" (uncharged)", "").trim();
+		return TELEPORT_JEWELLERY.contains(lower) ? new Object[]{capitalize(lower), charges} : null;
+	}
+
+	/** "Sailors' amulet" or "Ring of the elements" if that's what was clicked, else null. */
+	public static String rechargeableTeleportJewellery(String target)
+	{
+		String t = target == null ? "" : target.toLowerCase(Locale.ENGLISH).trim();
+		if (t.startsWith("sailors' amulet") && !t.contains("inert"))
+		{
+			return "Sailors' amulet";
+		}
+		if (t.startsWith("ring of the elements") && !t.contains("uncharged"))
+		{
+			return "Ring of the elements";
+		}
+		return null;
+	}
+
+	/**
+	 * The jewel a teleport option belongs to, when the option is a destination rather than
+	 * "Rub" or "Teleport": a worn Ring of the elements' "Water Altar", a Sailors' amulet's
+	 * "Port Roberts", or the same picked through a menu swap or submenu. Null otherwise.
+	 */
+	public static String rechargeableJewelForDestination(String option)
+	{
+		String o = option == null ? "" : option.toLowerCase(Locale.ENGLISH).trim();
+		switch (o)
+		{
+			case "air altar":
+			case "water altar":
+			case "earth altar":
+			case "fire altar":
+			case "last destination":
+				return "Ring of the elements";
+			case "the pandemonium":
+			case "pandemonium":
+			case "port roberts":
+			case "red rock":
+			case "deepfin point":
+				return "Sailors' amulet";
+			default:
+				return null;
+		}
+	}
+
+	/** Item options that don't teleport. */
+	public static boolean isNonTeleportOption(String option)
+	{
+		String o = option == null ? "" : option.toLowerCase(Locale.ENGLISH).trim();
+		return o.isEmpty() || o.equals("wear") || o.equals("wield") || o.equals("remove") || o.equals("check")
+			|| o.equals("drop") || o.equals("examine") || o.equals("uncharge") || o.equals("use") || o.equals("destroy")
+			|| o.equals("cancel");
+	}
+
+	/** Ring of endurance charges a stamina dose uses: 1, or 2 for an extended stamina potion; 0 otherwise. */
+	public static int enduranceChargesPerDose(String name)
+	{
+		String n = withoutDoses(name == null ? "" : name).toLowerCase(Locale.ENGLISH).trim();
+		if (n.equals("extended stamina potion"))
+		{
+			return 2;
+		}
+		return n.equals("stamina potion") || n.equals("stamina mix") ? 1 : 0;
+	}
+
+	/**
+	 * Teleport jewellery that lost a charge in these inventory changes: each result is
+	 * {lost item, item it became or -1 if it crumbled, charges it had}.
+	 */
+	public static java.util.List<int[]> jewelleryChargesUsed(java.util.Map<Integer, Integer> changes,
+		java.util.function.IntFunction<String> names)
+	{
+		java.util.List<int[]> used = new java.util.ArrayList<>();
+		for (java.util.Map.Entry<Integer, Integer> lost : changes.entrySet())
+		{
+			Object[] jewel = lost.getValue() < 0 ? teleportJewellery(names.apply(lost.getKey())) : null;
+			if (jewel == null || (int) jewel[1] <= 0)
+			{
+				continue;
+			}
+			int became = -1;
+			for (java.util.Map.Entry<Integer, Integer> gained : changes.entrySet())
+			{
+				Object[] other = gained.getValue() > 0 ? teleportJewellery(names.apply(gained.getKey())) : null;
+				if (other != null && other[0].equals(jewel[0]) && (int) other[1] < (int) jewel[1])
+				{
+					became = gained.getKey();
+					break;
+				}
+			}
+			if (became != -1 || (int) jewel[1] == 1)
+			{
+				used.add(new int[]{lost.getKey(), became, (int) jewel[1]});
+			}
+		}
+		return used;
+	}
+
+	/** Jewellery used up as it works, charged in full when it breaks (a ring of recoil shattering). */
+	private static final Set<String> CONSUMABLE_JEWELLERY = Set.of(
+		"ring of recoil", "bracelet of slaughter", "expeditious bracelet", "ring of forging", "bracelet of clay",
+		"necklace of dodgy", "dodgy necklace", "amulet of chemistry", "flamtaer bracelet", "amulet of bounty",
+		"necklace of faith", "inoculation bracelet", "ring of pursuit", "efaritay's aid");
+
+	public static boolean isConsumableJewellery(String name)
+	{
+		return name != null && CONSUMABLE_JEWELLERY.contains(name.toLowerCase(Locale.ENGLISH).trim());
+	}
+
 	/** Bosses, whose fights can outlast the normal before-the-fight window. */
 	private static final Set<String> BOSSES = Set.of(
 		"abyssal sire", "alchemical hydra", "amoxliatl", "araxxor", "artio", "barrows", "bryophyta", "callisto",

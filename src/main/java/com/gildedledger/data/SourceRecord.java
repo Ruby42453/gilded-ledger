@@ -41,6 +41,74 @@ public class SourceRecord
 		this.lastUpdatedMillis = nowMillis;
 	}
 
+	/** A separate copy of everything in this record. */
+	public SourceRecord copy()
+	{
+		SourceRecord c = new SourceRecord(key, name, category, firstSeenMillis);
+		c.lastUpdatedMillis = lastUpdatedMillis;
+		c.count = count;
+		c.loot.putAll(loot);
+		supplies.forEach((k, line) ->
+		{
+			SupplyLine l = new SupplyLine(line.itemId, line.name, line.unit);
+			l.quantity = line.quantity;
+			l.gp = line.gp;
+			c.supplies.put(k, l);
+		});
+		c.xp.putAll(xp);
+		c.excludedLoot.addAll(excludedLoot);
+		c.excludedSupplies.addAll(excludedSupplies);
+		return c;
+	}
+
+	/**
+	 * What this record gained since {@code start} (a copy of it taken earlier), or the
+	 * whole record if it didn't exist then. Nothing goes below zero, so a reset since
+	 * {@code start} just shows what came after it.
+	 */
+	public SourceRecord since(SourceRecord start)
+	{
+		SourceRecord d = new SourceRecord(key, name, category, firstSeenMillis);
+		d.lastUpdatedMillis = lastUpdatedMillis;
+		d.excludedLoot.addAll(excludedLoot);
+		d.excludedSupplies.addAll(excludedSupplies);
+		if (start == null)
+		{
+			SourceRecord all = copy();
+			return all;
+		}
+		d.count = Math.max(0, count - start.count);
+		loot.forEach((id, qty) ->
+		{
+			long gained = qty - start.loot.getOrDefault(id, 0L);
+			if (gained > 0)
+			{
+				d.loot.put(id, gained);
+			}
+		});
+		supplies.forEach((k, line) ->
+		{
+			SupplyLine was = start.supplies.get(k);
+			long qty = line.quantity - (was == null ? 0 : was.quantity);
+			if (qty > 0)
+			{
+				SupplyLine l = new SupplyLine(line.itemId, line.name, line.unit);
+				l.quantity = qty;
+				l.gp = Math.max(0, line.gp - (was == null ? 0 : was.gp));
+				d.supplies.put(k, l);
+			}
+		});
+		xp.forEach((skill, amount) ->
+		{
+			long gained = amount - start.xp.getOrDefault(skill, 0L);
+			if (gained > 0)
+			{
+				d.xp.put(skill, gained);
+			}
+		});
+		return d;
+	}
+
 	public void addLoot(int itemId, long quantity, long nowMillis)
 	{
 		if (itemId <= 0 || quantity <= 0)

@@ -133,7 +133,38 @@ public final class SkillRules
 	/** Filling or emptying an essence or rune pouch only moves items around. */
 	public static boolean isPouchShuffle(String itemName, String option)
 	{
+		String n = itemName == null ? "" : itemName.toLowerCase(Locale.ENGLISH);
+		if (n.contains("rune pouch") && normalize(option).equals("open"))
+		{
+			// Withdrawing or depositing through the rune pouch's own screen.
+			return true;
+		}
 		return bagContents(itemName) != null && isBagOption(option);
+	}
+
+	/** Small, medium, large, giant or colossal essence pouch. */
+	public static boolean isEssencePouch(String itemName)
+	{
+		String n = itemName == null ? "" : itemName.toLowerCase(Locale.ENGLISH);
+		return n.matches("(small|medium|large|giant|colossal) pouch.*");
+	}
+
+	/**
+	 * Which way a bag option moves items for the inventory: +1 takes them out (Empty,
+	 * Withdraw, Take), -1 puts them in (Fill, Deposit), 0 either way (anything else).
+	 */
+	public static int bagDirection(String option)
+	{
+		String o = normalize(option);
+		if (o.equals("empty") || o.startsWith("empty ") || o.equals("withdraw") || o.equals("take"))
+		{
+			return 1;
+		}
+		if (o.equals("fill") || o.equals("deposit"))
+		{
+			return -1;
+		}
+		return 0;
 	}
 
 	private static boolean isBagOption(String option)

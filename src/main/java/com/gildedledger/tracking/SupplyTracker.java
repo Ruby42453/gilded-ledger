@@ -223,6 +223,12 @@ public class SupplyTracker
 		}
 		tickPouchLoss.clear();
 		tickRuneLoss.clear();
+		if (magicXpThisTick)
+		{
+			// The spell went off: runes lost on later ticks aren't its runes (combination
+			// runecrafting right after Magic Imbue uses its own elemental runes).
+			lastCastTick = Integer.MIN_VALUE / 2;
+		}
 		magicXpThisTick = false;
 		pending.values().removeIf(p -> tick - p.tick > CONSUME_WINDOW_TICKS);
 	}

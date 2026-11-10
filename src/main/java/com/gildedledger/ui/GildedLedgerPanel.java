@@ -1,6 +1,7 @@
 package com.gildedledger.ui;
 
 import com.gildedledger.data.SourceCategory;
+import com.gildedledger.tracking.PeriodTracker;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -63,7 +64,9 @@ public class GildedLedgerPanel extends PluginPanel
 		SESSION_RENAME,
 		/** Key is the session id. */
 		SESSION_DELETE,
-		SESSION_CLEAR
+		SESSION_CLEAR,
+		/** Key is the period's name: DAY, WEEK, MONTH or ALL. */
+		PERIOD
 	}
 
 	private static final Color PROFIT_COLOR = ColorScheme.GRAND_EXCHANGE_PRICE;
@@ -131,13 +134,18 @@ public class GildedLedgerPanel extends PluginPanel
 		top.add(Box.createVerticalStrut(6));
 		// Loot, supplies and total XP, one per line so nothing is cut off.
 		JPanel line = new JPanel(new GridLayout(3, 1, 0, 1));
-		line.setAlignmentX(LEFT_ALIGNMENT);
 		for (JLabel label : new JLabel[]{totalLoot, totalSupplies, totalXp})
 		{
 			label.setFont(Fonts.small());
 			line.add(label);
 		}
+		line.setAlignmentX(LEFT_ALIGNMENT);
 		top.add(line);
+		top.add(Box.createVerticalStrut(6));
+		// The Day / Week / Month / All time square, the full width of the panel.
+		periodSquare.setAlignmentX(LEFT_ALIGNMENT);
+		top.add(periodSquare);
+		buildPeriodSquare();
 		top.add(Box.createVerticalStrut(10));
 
 		// GP/hour session: timer, profit and the start / pause / end buttons.
@@ -280,6 +288,56 @@ public class GildedLedgerPanel extends PluginPanel
 		label.setFont(Fonts.bold());
 		bar.add(label, BorderLayout.CENTER);
 		return bar;
+	}
+
+	// ---------------------------------------------------------------- day / week / month / all time
+
+	private final JPanel periodSquare = new FitHeightPanel(new GridLayout(2, 2, 2, 2));
+	private final Map<PeriodTracker.Period, JLabel> periodCells = new java.util.EnumMap<>(PeriodTracker.Period.class);
+	private PeriodTracker.Period period = PeriodTracker.Period.ALL;
+
+	/** A square of four: Day, Week / Month, All time. Click one to show just that period. */
+	private void buildPeriodSquare()
+	{
+		periodSquare.setOpaque(false);
+		for (PeriodTracker.Period p : PeriodTracker.Period.values())
+		{
+			JLabel cell = new JLabel(p == PeriodTracker.Period.ALL ? "All" : p.getLabel(), SwingConstants.CENTER);
+			cell.setFont(Fonts.small());
+			cell.setOpaque(true);
+			cell.setPreferredSize(new Dimension(0, 26));
+			cell.setToolTipText(p == PeriodTracker.Period.ALL ? "Everything tracked" : "Since this " + p.getLabel().toLowerCase(Locale.ENGLISH) + " began");
+			cell.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+			cell.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					actions.accept(Action.PERIOD, p.name());
+				}
+			});
+			periodCells.put(p, cell);
+			periodSquare.add(cell);
+		}
+		paintPeriodSquare();
+	}
+
+	private void paintPeriodSquare()
+	{
+		periodCells.forEach((p, cell) ->
+		{
+			boolean selected = p == period;
+			cell.setBackground(selected ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_COLOR);
+			cell.setForeground(selected ? Color.BLACK : ColorScheme.LIGHT_GRAY_COLOR);
+		});
+	}
+
+	/** Which period is showing; hovering it says since when (e.g. "Since 00:00 CST today"). */
+	public void setPeriod(PeriodTracker.Period selected, String note)
+	{
+		period = selected;
+		periodCells.get(selected).setToolTipText(note);
+		paintPeriodSquare();
 	}
 
 	/** Called on the Swing thread: the GP/hour session as it stands, and the session log. */

@@ -29,6 +29,8 @@ public class TrackerData
 	public Map<String, String> patchCrops = new LinkedHashMap<>();
 	/** Crops grown from untradeable seeds (quest plants like goutweed), hidden by a setting. */
 	public java.util.Set<String> untradeableCrops = new java.util.HashSet<>();
+	/** Where each period (DAY, WEEK, MONTH) began, for the Day / Week / Month views. */
+	public Map<String, PeriodStart> periodStarts = new LinkedHashMap<>();
 	/** The GP/hour session in progress (running or paused), or null. */
 	public GpSession activeSession;
 	/** Finished GP/hour sessions, newest first. */
@@ -215,6 +217,18 @@ public class TrackerData
 		if (patchCrops == null)
 		{
 			patchCrops = new LinkedHashMap<>();
+		}
+		if (periodStarts == null)
+		{
+			periodStarts = new LinkedHashMap<>();
+		}
+		if (untradeableCrops == null)
+		{
+			untradeableCrops = new java.util.HashSet<>();
+		}
+		if (sessionLog == null)
+		{
+			sessionLog = new ArrayList<>();
 		}
 		sources.values().removeIf(r -> r == null || r.key == null || r.category == null);
 		for (SourceRecord record : sources.values())

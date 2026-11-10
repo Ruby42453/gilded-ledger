@@ -29,6 +29,8 @@ Tracked per monster.
   - Blowpipe darts (at your Ava's device's rate) and Zulrah's scales, per shot. Each shot is counted from the dart it fires. **Check** the blowpipe now and then: the exact darts and scales used since the last Check replace the estimate.
   - Zulrah's scales from serpentine, tanzanite and magma helms.
 - **Cannonballs** count as they're fired at the monster, not when you load the cannon.
+- **Ring of endurance:** drinking a stamina dose while wearing it uses a charge (two for an extended stamina dose), each worth a stamina potion dose, charged to whatever you're doing.
+- **Consumable jewellery** (ring of recoil, bracelet of slaughter, expeditious bracelet, ring of forging, bracelet of clay, necklace of dodgy, amulet of chemistry, amulet of bounty, flamtaer bracelet…) costs the item when it breaks, charged to whatever you're doing.
 - **Supplies around a fight:** anything used up to 2 minutes before a fight (a super combat potion before the goblin) moves to that monster when it dies. Anything used up to 2 minutes after a fight (the teleport out) stays with it.
   - **Bosses** take longer: when a boss dies, or anything dies inside an instance, everything used since you entered (and up to 2 minutes before) counts, as far back as 15 minutes.
 - **Bonecrusher and ash sanctifier:** each bone crushed or ash scattered uses a charge. They have their own entries under Prayer, *Bonecrusher* and *Ash sanctifier*, with the charges used (ash sanctifier charges cost a tenth of a death rune; ecto-tokens are worth nothing) and the Prayer XP.
@@ -71,6 +73,9 @@ One category per skill. Every action goes to the skill that gave it the most XP 
 - **Vale Totems:** logs, the bows and shields made for the totems and the ents' offerings all go into one *Vale Totems* entry under Fletching.
 - **Bags:** fish into a fish barrel, logs into a log basket and gems into a gem bag count from the game's catch message. Seeds going into a seed box count from its contents. Filling or emptying pouches and bags is ignored.
 - **Runecrafting:**
+  - Runes crafted straight into the rune pouch count like runes in the inventory.
+  - Essence pouches count like the inventory too, so essence emptied from a pouch and crafted in the same tick is still counted.
+  - A craft that can't tell its altar on its own (say, its runes weren't seen) goes to the altar you crafted at just before, not Other.
   - Bonus runes (levels, Raiments of the Eye, abyssal lantern) count with the craft.
   - Combination runes cost their essence, talisman and elemental runes (including runes from the rune pouch), plus 1/16 of a binding necklace per craft.
   - Essence pouches degrading or being repaired doesn't count.
@@ -101,7 +106,8 @@ Minigame-only items (Guardians of the Rift essence and fragments, Wintertodt roo
 
 ## Teleports and general supplies
 
-- **Teleports:** tablets (including house tabs), teleport scrolls and teleport spells, in one table with the Magic XP from teleport spells. Diary alternatives are kept apart, e.g. *Varrock Teleport (Grand Exchange)*. Teleports are never charged to a monster, task or skill.
+- **Teleports:** tablets (including house tabs), teleport scrolls and teleport spells, in one table with the Magic XP from teleport spells.
+  - **Jewellery teleports** cost a charge: games necklace, ring of dueling, amulet of glory, skills necklace, combat bracelet, digsite pendant, necklace of passage, burning amulet, ring of wealth and ring of returning cost the value they lose going down a charge (or the last charge when they crumble). The Sailors' amulet costs a tenth of a law rune and 10 water runes per teleport; the Ring of the elements costs one air, earth, fire, water and law rune. Both count whether you rub them, pick the destination from the worn item's menu, or use a Menu Entry Swapper swap. Diary alternatives are kept apart, e.g. *Varrock Teleport (Grand Exchange)*. Teleports are never charged to a monster, task or skill.
 - **General supplies:** food, potions and runes used outside any fight or skilling action, in one table.
 
 ## GP/hour sessions
@@ -131,6 +137,10 @@ Settings → **Reminders**. Each has a checkbox to turn it off and a gear to cus
 
 **Main page**
 - **Total profit** at the top, with loot, supplies and total XP underneath.
+- **Day / Week / Month / All** square beside the totals: click a square to show only that period, everywhere in the panel. The selected one is highlighted orange; hover it to see when that period began.
+  - **Day** starts at 00:00, **Week** at Monday 00:00 and **Month** on the 1st at 00:00, in UTC by default (the game's daily reset). Change it with the *Time zone* setting.
+  - Periods are measured from when this version first ran, so the first day, week and month only include what happened after updating. Changing the time zone starts the current periods again from that moment.
+  - Resetting an entry or category resets it in every period. GP/hour sessions and the session log aren't affected.
 - Everything starts collapsed each time RuneLite starts. The **i** in the top right opens a page about the plugin and how to report bugs.
 - **GP/hour session** card, then the **Slayer task** card with the kills left.
 - **Top sources:** your three most profitable sources (click to hide).
@@ -151,6 +161,7 @@ Settings → **Reminders**. Each has a checkbox to turn it off and a gear to cus
   - *Skill layout:* one entry per item, or one table per skill.
   - *Hide skilling:* hides every skill from the panel and its totals.
   - *Font:* RuneScape, RuneScape (larger), fonts already on your computer (Arial, Times New Roman, Courier New), or one that comes with the plugin: Pixelify Sans, Silkscreen, VT323, Roboto Condensed, Barlow Semi Condensed, IBM Plex Sans, Source Sans 3, JetBrains Mono or Cinzel.
+  - *Time zone:* when Day, Week and Month begin. UTC by default (the game's daily reset), or pick a common zone such as GMT, CET, EST, CST, MST or PST. Zones with daylight saving follow it (CST is CDT in summer).
   - *Collapse new entries.*
 - **Hide skills** (advanced, closed by default): hide single skills, or minigame rewards under Other. Hidden skills are still tracked; turn them back on and the history is there.
 - **Reminders:** see above.
@@ -165,7 +176,6 @@ Settings → **Reminders**. Each has a checkbox to turn it off and a gear to cus
 ## Known limits
 
 - Loot sent to a looting bag by auto-pickup features isn't seen.
-- Jewellery charges aren't counted as supplies yet.
 - Blowpipe darts are an estimate between Checks, since the game decides each dart's fate at random.
 - Kills are counted when RuneLite sees the monster's drop, the same way RuneLite's own Loot Tracker counts them.
 
@@ -173,7 +183,8 @@ Settings → **Reminders**. Each has a checkbox to turn it off and a gear to cus
 
 1. Install JDK 17 (Eclipse Temurin) and the extensions this folder recommends: *Extension Pack for Java* and *Gradle for Java*.
 2. Open the folder. VS Code imports the Gradle project automatically.
-3. Press **F5** (*Run RuneLite with Gilded Ledger*), or run `./gradlew run`.
+3. Press **Ctrl+Shift+B** (*Run RuneLite with Gilded Ledger (clean Gradle build)*), or run `./gradlew clean run` (`.\gradlew.bat clean run` on Windows). This builds everything from scratch with Gradle each time.
+   - **F5** also works, but it runs VS Code's own build, which can fall out of step after replacing the folder's files (RuneLite then reports `NoClassDefFoundError` for one of the plugin's classes). If that happens, run *Java: Clean Java Language Server Workspace*, or use the Gradle task instead.
 4. If you use a Jagex account, follow https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts to log in to the development client.
 5. Run the tests with `./gradlew test`.
 
