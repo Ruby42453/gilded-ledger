@@ -1,0 +1,14 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "java",
+			"name": "Run RuneLite with Gilded Ledger",
+			"request": "launch",
+			"mainClass": "com.gildedledger.GildedLedgerPluginTest",
+			"projectName": "gilded-ledger",
+			"vmArgs": "-ea",
+			"args": "--developer-mode --debug"
+		}
+	]
+}

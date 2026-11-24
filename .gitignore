@@ -1,0 +1,14 @@
+.gradle
+build
+bin
+logs/
+*.log
+.idea/
+.project
+.settings/
+.classpath
+nbactions.xml
+nb-configuration.xml
+nbproject/
+*.class
+.vscode/settings.json
